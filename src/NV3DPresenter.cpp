@@ -84,6 +84,8 @@ bool NV3DPresenter::Init(ID3D11Device* dev, const Settings& s, DWORD tracked_gam
     }
 
     DiagnoseClickThrough();
+    Log(NV3D::LogLevel::Info,
+        L"NV3DPresenter: Init complete  iface=%p IsActive=true", (void*)iface_);
 
     last_tex_ = nullptr;
     return true;
@@ -91,6 +93,8 @@ bool NV3DPresenter::Init(ID3D11Device* dev, const Settings& s, DWORD tracked_gam
 
 void NV3DPresenter::Shutdown() {
     if (iface_) {
+        Log(NV3D::LogLevel::Info,
+            L"NV3DPresenter: Shutdown  iface=%p -> nullptr", (void*)iface_);
         iface_->Delete();
         iface_ = nullptr;
     }

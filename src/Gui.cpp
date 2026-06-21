@@ -36,10 +36,38 @@ std::string HotkeyLabel(const HotkeyDef& hk) {
     if (hk.mods & MOD_ALT)     s += "Alt+";
     if (hk.mods & MOD_SHIFT)   s += "Shift+";
     if (hk.mods & MOD_WIN)     s += "Win+";
-    if (hk.vk >= 'A' && hk.vk <= 'Z') s += (char)hk.vk;
-    else if (hk.vk >= '0' && hk.vk <= '9') s += (char)hk.vk;
-    else {
-        char buf[16]; sprintf_s(buf, "VK_0x%02X", hk.vk); s += buf;
+    if (hk.vk >= 'A' && hk.vk <= 'Z') {
+        s += (char)hk.vk;
+    } else if (hk.vk >= '0' && hk.vk <= '9') {
+        s += (char)hk.vk;
+    } else if (hk.vk >= VK_F1 && hk.vk <= VK_F24) {
+        char buf[8];
+        sprintf_s(buf, "F%u", static_cast<unsigned>(hk.vk - VK_F1 + 1u));
+        s += buf;
+    } else {
+        switch (hk.vk) {
+            case VK_SPACE:    s += "Space";     break;
+            case VK_RETURN:   s += "Enter";     break;
+            case VK_ESCAPE:   s += "Esc";       break;
+            case VK_TAB:      s += "Tab";       break;
+            case VK_BACK:     s += "Backspace"; break;
+            case VK_DELETE:   s += "Del";       break;
+            case VK_INSERT:   s += "Ins";       break;
+            case VK_HOME:     s += "Home";      break;
+            case VK_END:      s += "End";       break;
+            case VK_PRIOR:    s += "PgUp";      break;
+            case VK_NEXT:     s += "PgDn";      break;
+            case VK_LEFT:     s += "Left";      break;
+            case VK_RIGHT:    s += "Right";     break;
+            case VK_UP:       s += "Up";        break;
+            case VK_DOWN:     s += "Down";      break;
+            default: {
+                char buf[16];
+                sprintf_s(buf, "VK_0x%02X", hk.vk);
+                s += buf;
+                break;
+            }
+        }
     }
     return s;
 }
@@ -199,24 +227,38 @@ void Gui::DrawOutputSection(App& app) {
     }
 
     bool dirty = false;
-    dirty |= ImGui::Checkbox("Swap eyes",          &s.eye_swap);
-    dirty |= ImGui::Checkbox("Stay on top",        &s.on_top);
-    dirty |= ImGui::Checkbox("LightBoost timings", &s.enable_lightboost);
-    dirty |= ImGui::Checkbox("3DVision suppressor", &s.enable_suppressor);
+    dirty |= ImGui::Checkbox("Swap eyes",            &s.eye_swap);
+    dirty |= ImGui::Checkbox("LightBoost timings",   &s.enable_lightboost);
+    dirty |= ImGui::Checkbox("3DVision Driver Fix",  &s.enable_suppressor);
     ImGui::TextDisabled("(toggling any of the above reconnects the display)");
 
     if (dirty && app.state() == AppState::Running) app.Restart();
 
     ImGui::Spacing();
-    const bool running = app.state() == AppState::Running;
-    if (!running) {
-        if (ImGui::Button("Start", ImVec2(120, 32))) app.Start();
-        if (s.source_kind == SourceKind::None || s.source_id.empty()) {
-            ImGui::SameLine();
-            ImGui::TextDisabled("(no source = stereo test pattern only)");
-        }
-    } else {
-        if (ImGui::Button("Stop", ImVec2(120, 32))) app.Stop();
+
+    // Gate on whether the 3D output window (NV3DLib's FSE popup) is alive.
+    // Belt-and-braces: presenter.IsActive() is the primary signal, but we
+    // also accept state==Running as a fallback in case the two desync (the
+    // earlier "Start stuck after launch" symptom). Either one being true
+    // means we have a 3D window the user can Stop / Show.
+    const bool fse_alive = app.presenter().IsActive()
+                        || app.state() == AppState::Running;
+
+    // One Start/Stop toggle button — label changes with state.
+    if (ImGui::Button(fse_alive ? "Stop" : "Start", ImVec2(120, 32))) {
+        if (fse_alive) app.Stop();
+        else           app.Start();
+    }
+    ImGui::SameLine();
+    // Mirrors Ctrl+F8 — re-show the FSE popup (and re-spawn the ForceFocus
+    // watcher so the game gets foreground back). Toggles: press again or
+    // Ctrl+F8 to hide.
+    if (!fse_alive) ImGui::BeginDisabled();
+    if (ImGui::Button("Show 3D Window", ImVec2(140, 32))) app.ToggleFseVisible();
+    if (!fse_alive) ImGui::EndDisabled();
+
+    if (!fse_alive && (s.source_kind == SourceKind::None || s.source_id.empty())) {
+        ImGui::TextDisabled("(no source picked = test pattern)");
     }
 }
 
@@ -259,16 +301,12 @@ void Gui::DrawHotkeySection(App& app) {
 
     bool any_change = false;
     row("Toggle eye-swap",         1, s.hk_eyeswap,      any_change);
-    row("Show/hide control panel", 2, s.hk_toggle_panel, any_change);
     row("Show/hide 3D output",     4, s.hk_toggle_fse,   any_change);
-    row("Quit",                    3, s.hk_quit,         any_change);
 
     if (any_change) {
         app.hotkeys().Clear();
-        app.settings().hk_eyeswap.registered      = app.hotkeys().Register(1, s.hk_eyeswap.mods, s.hk_eyeswap.vk, [&app](){ app.ToggleEyeSwap(); });
-        app.settings().hk_toggle_panel.registered = app.hotkeys().Register(2, s.hk_toggle_panel.mods, s.hk_toggle_panel.vk, [&app](){ app.TogglePanelVisible(); });
-        app.settings().hk_quit.registered         = app.hotkeys().Register(3, s.hk_quit.mods, s.hk_quit.vk, [&app](){ app.Quit(); });
-        app.settings().hk_toggle_fse.registered   = app.hotkeys().Register(4, s.hk_toggle_fse.mods, s.hk_toggle_fse.vk, [&app](){ app.ToggleFseVisible(); });
+        app.settings().hk_eyeswap.registered    = app.hotkeys().Register(1, s.hk_eyeswap.mods,    s.hk_eyeswap.vk,    [&app](){ app.ToggleEyeSwap();    });
+        app.settings().hk_toggle_fse.registered = app.hotkeys().Register(4, s.hk_toggle_fse.mods, s.hk_toggle_fse.vk, [&app](){ app.ToggleFseVisible(); });
     }
 }
 

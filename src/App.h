@@ -7,6 +7,7 @@
 #include "TrayIcon.h"
 
 #include <Windows.h>
+#include <atomic>
 #include <chrono>
 #include <memory>
 #include <string>
@@ -102,6 +103,19 @@ private:
     TrayIcon                           tray_;
     std::unique_ptr<Gui>               gui_;
     std::unique_ptr<ICaptureSource>    cap_;
+
+    // Captured game's PID, cached so Ctrl+F8 / "Show 3D Window" can re-spawn
+    // the ForceFocus watcher on every show transition. 0 = no tracked game.
+    DWORD                              tracked_pid_ = 0;
+
+    // Per-watcher stop flag. Each StartForceFocusWatcher call drops the
+    // previous watcher's shared_ptr and creates a fresh atomic so the old
+    // detached thread sees stop and bails on its next tick. Hiding the FSE
+    // (Ctrl+F8 off, button, Stop) clears this and the watcher dies.
+    std::shared_ptr<std::atomic<bool>> focus_watcher_stop_;
+
+    void StartForceFocusWatcher(DWORD pid);
+    void StopForceFocusWatcher();
 
     // Telemetry / status
     UINT                               last_src_w_ = 0;

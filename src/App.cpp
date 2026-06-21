@@ -336,47 +336,27 @@ bool App::Start() {
             }
         }
 
-        if (game_hwnd && tracked_pid != 0 && tracked_pid != GetCurrentProcessId()) {
-            // VRto3D's exact pattern (vrto3d/src/presenter/nvstereo_dx9_presenter.cpp:1303-1314):
-            // the ForceFocus loop runs on its OWN detached thread, never on
-            // the main thread. AttachThreadInput inside ForceFocus uses the
-            // calling thread's id; running it on the main thread (with the
-            // GUI message pump and existing input-thread state) is what made
-            // the first SetForegroundWindow just "highlight" the game
-            // without delivering input.
-            const DWORD game_pid = tracked_pid;
-            std::thread([game_pid]() {
-                for (int i = 0; i < 16; ++i) {
-                    HWND target = nullptr;
-                    struct Ctx { DWORD pid; HWND result; } c{ game_pid, nullptr };
-                    EnumWindows([](HWND h, LPARAM lp) -> BOOL {
-                        auto* cc = reinterpret_cast<Ctx*>(lp);
-                        DWORD pid = 0;
-                        GetWindowThreadProcessId(h, &pid);
-                        if (pid == cc->pid && IsWindowVisible(h) && GetWindowTextLengthW(h) > 0) {
-                            cc->result = h;
-                            return FALSE;
-                        }
-                        return TRUE;
-                    }, reinterpret_cast<LPARAM>(&c));
-                    target = c.result;
-                    if (target && GetForegroundWindow() != target) {
-                        ForceFocusToGame(target);
-                    }
-                    std::this_thread::sleep_for(std::chrono::seconds(1));
-                }
-            }).detach();
-        }
+        tracked_pid_ = tracked_pid;
+        StartForceFocusWatcher(tracked_pid_);
+    } else {
+        tracked_pid_ = 0;
     }
 
     return true;
 }
 
 void App::Stop() {
+    Log(NV3D::LogLevel::Info,
+        L"App::Stop  cap_=%p presenter.IsActive=%s state=%d",
+        (void*)cap_.get(),
+        presenter_.IsActive() ? L"true" : L"false",
+        (int)state_);
+    StopForceFocusWatcher();
     if (cap_) { cap_->Stop(); cap_.reset(); }
     presenter_.Shutdown();
     renderer_.ReleaseStaging();
     if (state_ == AppState::Running) state_ = AppState::Idle;
+    tracked_pid_ = 0;
     tray_.SetStartStopLabel(L"Start");
     // Refresh the source picker so the user gets up-to-date windows /
     // monitors when they pick something different before clicking Start
@@ -419,19 +399,32 @@ void App::HidePanel() {
 }
 
 void App::ToggleFseVisible() {
+    Log(NV3D::LogLevel::Info,
+        L"App::ToggleFseVisible  state=%d fse_visible_=%d presenter.IsActive=%s",
+        (int)state_, (int)fse_visible_,
+        presenter_.IsActive() ? L"true" : L"false");
     // Mirrors VRto3D's Ctrl+F8 → flip is_on_top_/man_on_top_ pattern. We just
     // flip an atomic NV3DLib reads on its window thread; that thread handles
-    // suppress_minimize_ sequencing + SW_MINIMIZE/SW_RESTORE itself. Doing
-    // ShowWindow cross-thread on a FSE D3D9Ex window wedges DWM and leaves
-    // our control panel non-responsive — which is why the older Ctrl+Alt+H
-    // path went white-screen.
+    // suppress_minimize_ sequencing + SW_MINIMIZE/SW_RESTORE itself.
+    //
+    // Show transition also (re)spawns the ForceFocus watcher so the
+    // captured game gets foreground back. Hide transition kills the watcher
+    // so it stops yanking focus while the user is trying to interact with
+    // the desktop.
     if (state_ != AppState::Running) return;
     fse_visible_ = !fse_visible_;
     presenter_.SetVisible(fse_visible_);
-    status_extra_ = fse_visible_ ? L"" : L"FSE minimized (Ctrl+F8 to restore)";
+    if (fse_visible_) {
+        StartForceFocusWatcher(tracked_pid_);
+        status_extra_.clear();
+    } else {
+        StopForceFocusWatcher();
+        status_extra_ = L"FSE minimized (Ctrl+F8 to restore)";
+    }
 }
 
 void App::Quit() {
+    Log(NV3D::LogLevel::Info, L"App::Quit  state=%d", (int)state_);
     running_ = false;
     PostQuitMessage(0);
 }
@@ -440,20 +433,60 @@ void App::RefreshSources() {
     if (gui_) gui_->RefreshSources();
 }
 
+void App::StartForceFocusWatcher(DWORD pid) {
+    // Always drop any previous watcher first so we don't end up with two
+    // detached threads both yanking foreground.
+    StopForceFocusWatcher();
+    if (pid == 0 || pid == GetCurrentProcessId()) return;
+
+    focus_watcher_stop_ = std::make_shared<std::atomic<bool>>(false);
+    auto stop = focus_watcher_stop_;
+    std::thread([pid, stop]() {
+        for (int i = 0; i < 16; ++i) {
+            if (stop->load(std::memory_order_relaxed)) return;
+            struct Ctx { DWORD pid; HWND result; } c{ pid, nullptr };
+            EnumWindows([](HWND h, LPARAM lp) -> BOOL {
+                auto* cc = reinterpret_cast<Ctx*>(lp);
+                DWORD wpid = 0;
+                GetWindowThreadProcessId(h, &wpid);
+                if (wpid == cc->pid && IsWindowVisible(h) && GetWindowTextLengthW(h) > 0) {
+                    cc->result = h;
+                    return FALSE;
+                }
+                return TRUE;
+            }, reinterpret_cast<LPARAM>(&c));
+            if (c.result && GetForegroundWindow() != c.result) {
+                ForceFocusToGame(c.result);
+            }
+            // 1s tick split into 10×100ms so the stop flag is checked
+            // promptly — Ctrl+F8 to hide should silence the watcher within
+            // a tenth of a second, not after a full second of yanking.
+            for (int j = 0; j < 10; ++j) {
+                if (stop->load(std::memory_order_relaxed)) return;
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            }
+        }
+    }).detach();
+}
+
+void App::StopForceFocusWatcher() {
+    if (focus_watcher_stop_) {
+        focus_watcher_stop_->store(true, std::memory_order_relaxed);
+        focus_watcher_stop_.reset();
+    }
+}
+
 void App::ReregisterHotkeys() {
     hotkeys_.Clear();
+    // Only the two user-facing hotkeys are bound. Quit + show/hide control
+    // panel are still reachable through the tray icon and the X button on
+    // the control panel itself — no global hotkey for them.
     settings_.hk_eyeswap.registered =
         hotkeys_.Register(kHKEyeSwap, settings_.hk_eyeswap.mods, settings_.hk_eyeswap.vk,
                           [this] { ToggleEyeSwap(); });
-    settings_.hk_toggle_panel.registered =
-        hotkeys_.Register(kHKTogglePanel, settings_.hk_toggle_panel.mods, settings_.hk_toggle_panel.vk,
-                          [this] { TogglePanelVisible(); });
     settings_.hk_toggle_fse.registered =
         hotkeys_.Register(kHKToggleFse, settings_.hk_toggle_fse.mods, settings_.hk_toggle_fse.vk,
                           [this] { ToggleFseVisible(); });
-    settings_.hk_quit.registered =
-        hotkeys_.Register(kHKQuit, settings_.hk_quit.mods, settings_.hk_quit.vk,
-                          [this] { Quit(); });
 }
 
 void App::Tick() {
@@ -528,9 +561,15 @@ void App::Tick() {
     // running BeginImGuiFrame → widget draws → ImGui_ImplDX11_RenderDrawData
     // → Present on the panel's swap chain every tick (so 120+ times per
     // second), all of which is GPU+CPU work for a window the user can't see.
-    // For 30fps WGC capture that contention is enough to drag the source's
-    // render rate down into "slow motion" territory.
-    if (panel_visible_) {
+    //
+    // Use IsIconic(hwnd_) — i.e. the real Win32 minimized state — instead
+    // of our cached panel_visible_ flag. The cached flag only tracks
+    // explicit Show/HidePanel calls; it doesn't update when the user
+    // un-minimizes the window from the taskbar, so we'd stay frozen on the
+    // pre-HidePanel frame (which is why the button stayed on "Start" even
+    // after capture had started and the user had restored the panel).
+    const bool panel_minimized = hwnd_ && IsIconic(hwnd_);
+    if (!panel_minimized) {
         renderer_.BeginImGuiFrame();
         if (gui_) gui_->Draw(*this);
         renderer_.EndImGuiFrame();
@@ -571,8 +610,11 @@ LRESULT App::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             tray_.OnMessage(wp, lp);
             return 0;
         case WM_CLOSE:
-            // Hide to tray rather than quit, per plan.
-            HidePanel();
+            // X-button quits the app (and tears down the FSE popup via the
+            // App::Shutdown → NV3DPresenter::Shutdown → NV3DLib teardown
+            // chain). Earlier this minimized to the tray, but that left the
+            // FSE popup live and surprised users who expected close-is-close.
+            Quit();
             return 0;
         case WM_DESTROY:
             PostQuitMessage(0);

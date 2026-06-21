@@ -32,7 +32,7 @@ struct Settings {
     bool         auto_reacquire = true;
 
     // ---- Hotkeys (persisted) ----
-    HotkeyDef hk_eyeswap     { MOD_CONTROL | MOD_ALT, 'E' };
+    HotkeyDef hk_eyeswap     { MOD_CONTROL, VK_F9 };
     HotkeyDef hk_toggle_panel{ MOD_CONTROL | MOD_ALT, 'S' };
     HotkeyDef hk_toggle_fse  { MOD_CONTROL, VK_F8 };
     HotkeyDef hk_quit        { MOD_CONTROL | MOD_ALT, 'Q' };
