@@ -1,0 +1,40 @@
+
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.1.32210.238
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "NV3D-Glass", "NV3D-Glass.vcxproj", "{A0E1F102-3D4B-4C77-9F1E-2C8B7F9D1E01}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug-MT|x86 = Debug-MT|x86
+		Debug-MT|x64 = Debug-MT|x64
+		Release-MT|x86 = Release-MT|x86
+		Release-MT|x64 = Release-MT|x64
+		Debug-MD|x86 = Debug-MD|x86
+		Debug-MD|x64 = Debug-MD|x64
+		Release-MD|x86 = Release-MD|x86
+		Release-MD|x64 = Release-MD|x64
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{A0E1F102-3D4B-4C77-9F1E-2C8B7F9D1E01}.Debug-MT|x86.ActiveCfg = Debug-MT|Win32
+		{A0E1F102-3D4B-4C77-9F1E-2C8B7F9D1E01}.Debug-MT|x86.Build.0 = Debug-MT|Win32
+		{A0E1F102-3D4B-4C77-9F1E-2C8B7F9D1E01}.Debug-MT|x64.ActiveCfg = Debug-MT|x64
+		{A0E1F102-3D4B-4C77-9F1E-2C8B7F9D1E01}.Debug-MT|x64.Build.0 = Debug-MT|x64
+		{A0E1F102-3D4B-4C77-9F1E-2C8B7F9D1E01}.Release-MT|x86.ActiveCfg = Release-MT|Win32
+		{A0E1F102-3D4B-4C77-9F1E-2C8B7F9D1E01}.Release-MT|x86.Build.0 = Release-MT|Win32
+		{A0E1F102-3D4B-4C77-9F1E-2C8B7F9D1E01}.Release-MT|x64.ActiveCfg = Release-MT|x64
+		{A0E1F102-3D4B-4C77-9F1E-2C8B7F9D1E01}.Release-MT|x64.Build.0 = Release-MT|x64
+		{A0E1F102-3D4B-4C77-9F1E-2C8B7F9D1E01}.Debug-MD|x86.ActiveCfg = Debug-MD|Win32
+		{A0E1F102-3D4B-4C77-9F1E-2C8B7F9D1E01}.Debug-MD|x86.Build.0 = Debug-MD|Win32
+		{A0E1F102-3D4B-4C77-9F1E-2C8B7F9D1E01}.Debug-MD|x64.ActiveCfg = Debug-MD|x64
+		{A0E1F102-3D4B-4C77-9F1E-2C8B7F9D1E01}.Debug-MD|x64.Build.0 = Debug-MD|x64
+		{A0E1F102-3D4B-4C77-9F1E-2C8B7F9D1E01}.Release-MD|x86.ActiveCfg = Release-MD|Win32
+		{A0E1F102-3D4B-4C77-9F1E-2C8B7F9D1E01}.Release-MD|x86.Build.0 = Release-MD|Win32
+		{A0E1F102-3D4B-4C77-9F1E-2C8B7F9D1E01}.Release-MD|x64.ActiveCfg = Release-MD|x64
+		{A0E1F102-3D4B-4C77-9F1E-2C8B7F9D1E01}.Release-MD|x64.Build.0 = Release-MD|x64
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+EndGlobal

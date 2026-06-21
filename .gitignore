@@ -1,0 +1,26 @@
+## Visual Studio
+.vs/
+bin/
+obj/
+*.user
+*.suo
+*.sdf
+*.opensdf
+*.VC.db
+*.VC.opendb
+
+## Build outputs
+bin/
+obj/
+out/
+[Dd]ebug*/
+[Rr]elease*/
+x64/
+Win32/
+
+## VS Code
+.vscode/
+
+## Runtime
+NV3D-Glass.ini
+NV3D-Glass.log

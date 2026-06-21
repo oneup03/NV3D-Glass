@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="Source Files">
+      <UniqueIdentifier>{4FC737F1-C7A5-4376-A066-2A32D752A2FF}</UniqueIdentifier>
+      <Extensions>cpp;c;cc;cxx</Extensions>
+    </Filter>
+    <Filter Include="Header Files">
+      <UniqueIdentifier>{93995380-89BD-4b04-88EB-625FBE52EBFB}</UniqueIdentifier>
+      <Extensions>h;hpp;hh;hxx</Extensions>
+    </Filter>
+    <Filter Include="External\imgui">
+      <UniqueIdentifier>{C5A0D7B6-9F1F-4A5E-A5D9-1E7E2C9B3F01}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="src\main.cpp">             <Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="src\App.cpp">              <Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="src\Capture.cpp">          <Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="src\CaptureDXGI.cpp">      <Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="src\Gui.cpp">              <Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="src\HotkeyManager.cpp">    <Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="src\Logging.cpp">          <Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="src\NV3DPresenter.cpp">    <Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="src\Renderer.cpp">         <Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="src\Settings.cpp">         <Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="src\SourceEnumerator.cpp"> <Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="src\TrayIcon.cpp">         <Filter>Source Files</Filter></ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="src\App.h">                <Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="src\Capture.h">            <Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="src\CaptureDXGI.h">        <Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="src\CaptureSource.h">      <Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="src\Gui.h">                <Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="src\HotkeyManager.h">      <Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="src\Logging.h">            <Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="src\NV3DPresenter.h">      <Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="src\Renderer.h">           <Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="src\Settings.h">           <Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="src\SourceEnumerator.h">   <Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="src\TrayIcon.h">           <Filter>Header Files</Filter></ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="external\imgui\imgui.cpp">                       <Filter>External\imgui</Filter></ClCompile>
+    <ClCompile Include="external\imgui\imgui_draw.cpp">                  <Filter>External\imgui</Filter></ClCompile>
+    <ClCompile Include="external\imgui\imgui_tables.cpp">                <Filter>External\imgui</Filter></ClCompile>
+    <ClCompile Include="external\imgui\imgui_widgets.cpp">               <Filter>External\imgui</Filter></ClCompile>
+    <ClCompile Include="external\imgui\imgui_demo.cpp">                  <Filter>External\imgui</Filter></ClCompile>
+    <ClCompile Include="external\imgui\backends\imgui_impl_win32.cpp">   <Filter>External\imgui</Filter></ClCompile>
+    <ClCompile Include="external\imgui\backends\imgui_impl_dx11.cpp">    <Filter>External\imgui</Filter></ClCompile>
+    <ClCompile Include="external\imgui\misc\cpp\imgui_stdlib.cpp">       <Filter>External\imgui</Filter></ClCompile>
+  </ItemGroup>
+</Project>
