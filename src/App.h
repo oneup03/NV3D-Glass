@@ -111,6 +111,7 @@ private:
     int                                fps_frames_ = 0;
     float                              fps_       = 0.0f;
     uint32_t                           test_pattern_frame_ = 0;
+    std::chrono::steady_clock::time_point last_present_ts_{};
     std::wstring                       status_extra_;
 };
 

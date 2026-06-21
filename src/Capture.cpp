@@ -68,6 +68,15 @@ bool BuildSession(CaptureWGC::Impl& impl, ID3D11Device* dev) {
         try { impl.session.IsCursorCaptureEnabled(false); } catch (...) {}
         // Win11 22H2+ only — older OS throws, ignore.
         try { impl.session.IsBorderRequired(false);       } catch (...) {}
+        // Lift the WGC ~60fps cap. Without an explicit MinUpdateInterval,
+        // WGC delivers frames at roughly display-composition rate (60Hz)
+        // regardless of the source's actual update rate — which manifests as
+        // "slow motion" when capturing higher-rate sources, and as starving
+        // 30fps content of GPU time when our consumer keeps polling at 125Hz
+        // expecting fresh frames that never come. 1ms tracks 120/144/240Hz
+        // sources without saturating the GPU. Same fix used by Sunshine
+        // (PR #4424), Apollo (#676), and SR-Loom (Capture.cpp:179).
+        try { impl.session.MinUpdateInterval(std::chrono::milliseconds(1)); } catch (...) {}
         impl.session.StartCapture();
     } catch (winrt::hresult_error const&) {
         return false;
@@ -119,6 +128,24 @@ bool CaptureWGC::TryAcquire(ID3D11Texture2D** out, UINT* w, UINT* h, DXGI_FORMAT
     }
     if (!frame) return false;
 
+    // Drain to the NEWEST queued frame so we never present stale content.
+    // WGC's FramePool buffers frames the source produces between our polls;
+    // if our tick falls behind (GPU contention, scheduler hiccup), older
+    // frames stay queued and the consumer sees a growing latency tail —
+    // which downstream reads as "slow motion" on real-time sources. Same
+    // pattern as SR-Loom (Capture.cpp:208-214).
+    try {
+        for (;;) {
+            auto next = impl_->pool.TryGetNextFrame();
+            if (!next) break;
+            frame.Close();
+            frame = next;
+        }
+    } catch (...) {
+        impl_->lost.store(true);
+        return false;
+    }
+
     // Source dim changes (e.g. window resize): recreate the pool at new size.
     auto cs = frame.ContentSize();
     if (cs.Width != impl_->size.Width || cs.Height != impl_->size.Height) {
@@ -148,6 +175,14 @@ bool CaptureWGC::TryAcquire(ID3D11Texture2D** out, UINT* w, UINT* h, DXGI_FORMAT
 
 bool CaptureWGC::IsLost() const {
     return !impl_ || impl_->lost.load();
+}
+
+UINT CaptureWGC::InitialWidth() const {
+    return (impl_ ? static_cast<UINT>(impl_->size.Width)  : 0u);
+}
+
+UINT CaptureWGC::InitialHeight() const {
+    return (impl_ ? static_cast<UINT>(impl_->size.Height) : 0u);
 }
 
 void CaptureWGC::Stop() {

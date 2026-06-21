@@ -28,6 +28,13 @@ public:
     bool IsLost() const override;
     void Stop() override;
 
+    // Dimensions WGC will deliver for the captured item — known at session
+    // construction time (item.Size()). Callers use this to size their staging
+    // texture exactly so CopyResource hits the fast path instead of falling
+    // through to a scaler shader pass on every frame.
+    UINT InitialWidth()  const;
+    UINT InitialHeight() const;
+
     // Public so file-scope helpers in Capture.cpp can name the type. The
     // pointer itself stays owned by us.
     struct Impl;

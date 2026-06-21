@@ -127,7 +127,11 @@ void Renderer::EndImGuiFrame() {
         ctx_->ClearRenderTargetView(rtv_.Get(), clear);
         ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
     }
-    if (swap_) swap_->Present(1, 0);
+    // Present(0, 0) instead of Present(1, 0): no vsync block on the control-
+    // panel swap chain. The 1-vsync wait per tick was eating ~8ms of CPU
+    // every Tick whether or not anything moved in the GUI — that's GPU+CPU
+    // time the captured source could be using.
+    if (swap_) swap_->Present(0, 0);
 }
 
 bool Renderer::CreateFixedStaging(UINT w, UINT h) {

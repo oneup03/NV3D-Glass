@@ -212,42 +212,15 @@ bool App::Start() {
     SourceKind kind{}; HWND src_hwnd{}; HMONITOR src_hmon{};
     ResolveCaptureTarget(&kind, &src_hwnd, &src_hmon);
 
-    // Decide on the staging texture size up front so we can pre-allocate it
-    // exactly once for this session — NV3DLib's DX11 backend caches the shared
-    // D3D9 import by pointer identity, and recreating the staging mid-stream
-    // forces a re-import that can hitch / drop the FSE scan-out.
+    // Try to start the capture session FIRST so we can size the staging
+    // texture to exactly what WGC will deliver. CopyResource on dim-match is
+    // an order of magnitude cheaper than the scaler shader pass we'd
+    // otherwise need every frame — and the scaler's extra GPU work was
+    // contending with the captured source's own rendering, dragging the
+    // observed source rate down to "slow motion" levels.
     //
-    // Staging is sized to the OUTPUT monitor (the 3DVision panel), not the
-    // source. The Renderer's scaler shader stretches the captured texture to
-    // fit, so the source can be any resolution / can resize at runtime
-    // without breaking us.
-    HMONITOR out_mon = ResolveOutputMonitor();
-    if (!out_mon) out_mon = MonitorFromPoint(POINT{0, 0}, MONITOR_DEFAULTTOPRIMARY);
-    UINT staging_w = 0, staging_h = 0;
-    if (out_mon) {
-        MONITORINFOEXW mi{}; mi.cbSize = sizeof(mi);
-        if (GetMonitorInfoW(out_mon, &mi)) {
-            staging_w = (UINT)(mi.rcMonitor.right  - mi.rcMonitor.left);
-            staging_h = (UINT)(mi.rcMonitor.bottom - mi.rcMonitor.top);
-        }
-    }
-    if (staging_w == 0 || staging_h == 0) {
-        staging_w = 2560;
-        staging_h = 1440;
-    }
-
-    if (!renderer_.CreateFixedStaging(staging_w, staging_h)) {
-        state_ = AppState::ErrorPresenter;
-        status_extra_ = L"failed to allocate staging texture";
-        return false;
-    }
-    renderer_.FillTestPattern(0);   // known-good stereo content for first frame
-
-    // Start the capture session only if the user picked one. With kind=None we
-    // present the test pattern (animated below in Tick) and never call into
-    // capture. If the picked source is stale / WGC refuses, we fall through
-    // to the test-pattern path with a status message — better UX than erroring
-    // out and tearing the whole pipeline down.
+    // Fall through to test-pattern mode (2560x720, no scaler ever) if the
+    // user didn't pick a source or capture refused.
     std::wstring capture_warning;
     if (kind == SourceKind::Window) {
         if (!src_hwnd) {
@@ -267,6 +240,26 @@ bool App::Start() {
             }
         }
     }
+
+    UINT staging_w = 0, staging_h = 0;
+    if (auto* wgc = dynamic_cast<CaptureWGC*>(cap_.get())) {
+        staging_w = wgc->InitialWidth();
+        staging_h = wgc->InitialHeight();
+    }
+    if (staging_w == 0 || staging_h == 0) {
+        // Either test-pattern mode (no cap_) or DXGI fallback (no Initial* getter).
+        // Default to a sensible SBS test-pattern size.
+        staging_w = 2560;
+        staging_h = 720;
+    }
+
+    if (!renderer_.CreateFixedStaging(staging_w, staging_h)) {
+        if (cap_) { cap_->Stop(); cap_.reset(); }
+        state_ = AppState::ErrorPresenter;
+        status_extra_ = L"failed to allocate staging texture";
+        return false;
+    }
+    renderer_.FillTestPattern(0);   // known-good stereo content for first frame
 
     settings_.target_monitor = ResolveOutputMonitor();
 
@@ -465,14 +458,11 @@ void App::ReregisterHotkeys() {
 
 void App::Tick() {
     if (state_ == AppState::Running) {
+        bool staging_dirty = false;
+
         if (cap_) {
             // Capture mode. Drain WGC if a fresh frame is available; otherwise
             // leave the staging texture holding the last captured frame.
-            // (Previously we re-ran FillTestPattern on every tick with no
-            // fresh capture, which at our ~125Hz tick rate meant the test
-            // pattern overwrote the captured frame between WGC arrivals at
-            // ~60Hz — user saw mostly test pattern, with brief flashes of
-            // the actual capture.)
             ID3D11Texture2D* src = nullptr;
             UINT w = 0, h = 0;
             DXGI_FORMAT fmt = DXGI_FORMAT_UNKNOWN;
@@ -481,6 +471,7 @@ void App::Tick() {
                 last_src_w_   = w;
                 last_src_h_   = h;
                 last_src_fmt_ = (UINT)fmt;
+                staging_dirty = true;
                 src->Release();
             }
             if (cap_->IsLost()) {
@@ -493,15 +484,34 @@ void App::Tick() {
             // see the present loop is alive and verify per-eye stereo
             // independently of any capture issues.
             renderer_.FillTestPattern(test_pattern_frame_++);
+            staging_dirty = true;
         }
 
-        // Skip the D3D9 PresentEx when the user has hidden the FSE popup via
-        // Ctrl+F8. Some drivers block PresentEx on an OCCLUDED device window
-        // (FSE D3D9Ex window that's minimized), which wedges the main loop
-        // and the GUI / hotkeys with it.
-        if (fse_visible_ && renderer_.Staging()) {
+        // Present only when:
+        //   * the staging texture actually changed this tick, OR
+        //   * a heartbeat is due (keeps the 3D Vision driver from deciding
+        //     we've stopped and dropping stereo if the captured source is
+        //     ever idle for a while)
+        //
+        // Skip entirely while the FSE popup is hidden via Ctrl+F8 — some
+        // drivers block PresentEx on an OCCLUDED device window and wedge
+        // the main loop + GUI with it.
+        //
+        // The reason this matters: NV3DLib's worker takes ~16.67ms per
+        // PresentEx (one vsync for the L+R pair at 120Hz frame-sequential).
+        // At our 8ms tick rate, presenting every tick spam-submits to a
+        // worker that drops anything that can't be queued within 8ms — and
+        // each redundant Present is GPU work that competes with the captured
+        // 30fps source. That competition starved the source of GPU time so
+        // it couldn't hit 30fps, which read as "slow motion" downstream.
+        const auto now = std::chrono::steady_clock::now();
+        const bool heartbeat_due = (now - last_present_ts_) >= std::chrono::milliseconds(250);
+        const bool want_present  = (staging_dirty || heartbeat_due) && fse_visible_;
+
+        if (want_present && renderer_.Staging()) {
             presenter_.SubmitFrame(renderer_.Staging());
             fps_frames_++;
+            last_present_ts_ = now;
         }
     }
 
@@ -514,11 +524,17 @@ void App::Tick() {
         fps_frames_ = 0;
     }
 
-    // Always render the control panel (cheap), even while hidden — keeps
-    // ImGui state warm. ShowWindow(SW_HIDE) suppresses the visual.
-    renderer_.BeginImGuiFrame();
-    if (gui_) gui_->Draw(*this);
-    renderer_.EndImGuiFrame();
+    // Skip ImGui entirely while the control panel is minimized. We were
+    // running BeginImGuiFrame → widget draws → ImGui_ImplDX11_RenderDrawData
+    // → Present on the panel's swap chain every tick (so 120+ times per
+    // second), all of which is GPU+CPU work for a window the user can't see.
+    // For 30fps WGC capture that contention is enough to drag the source's
+    // render rate down into "slow motion" territory.
+    if (panel_visible_) {
+        renderer_.BeginImGuiFrame();
+        if (gui_) gui_->Draw(*this);
+        renderer_.EndImGuiFrame();
+    }
 }
 
 LRESULT CALLBACK App::StaticWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
