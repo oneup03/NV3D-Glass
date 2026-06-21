@@ -93,6 +93,7 @@
     <ClCompile Include="src\App.cpp" />
     <ClCompile Include="src\Capture.cpp" />
     <ClCompile Include="src\CaptureDXGI.cpp" />
+    <ClCompile Include="src\CaptureKatanga.cpp" />
     <ClCompile Include="src\Gui.cpp" />
     <ClCompile Include="src\HotkeyManager.cpp" />
     <ClCompile Include="src\Logging.cpp" />
@@ -106,6 +107,7 @@
     <ClInclude Include="src\App.h" />
     <ClInclude Include="src\Capture.h" />
     <ClInclude Include="src\CaptureDXGI.h" />
+    <ClInclude Include="src\CaptureKatanga.h" />
     <ClInclude Include="src\CaptureSource.h" />
     <ClInclude Include="src\Gui.h" />
     <ClInclude Include="src\HotkeyManager.h" />

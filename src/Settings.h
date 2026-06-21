@@ -6,7 +6,7 @@
 
 namespace nv3dg {
 
-enum class SourceKind : int { None = 0, Window = 1, Monitor = 2 };
+enum class SourceKind : int { None = 0, Window = 1, Monitor = 2, Katanga = 3 };
 
 struct HotkeyDef {
     UINT mods = 0;     // MOD_CONTROL|MOD_ALT etc.

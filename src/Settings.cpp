@@ -49,6 +49,7 @@ const wchar_t* SourceKindStr(SourceKind k) {
     switch (k) {
         case SourceKind::Window:  return L"window";
         case SourceKind::Monitor: return L"monitor";
+        case SourceKind::Katanga: return L"katanga";
         default:                  return L"none";
     }
 }
@@ -56,6 +57,7 @@ const wchar_t* SourceKindStr(SourceKind k) {
 SourceKind SourceKindFromStr(const std::wstring& s) {
     if (_wcsicmp(s.c_str(), L"window")  == 0) return SourceKind::Window;
     if (_wcsicmp(s.c_str(), L"monitor") == 0) return SourceKind::Monitor;
+    if (_wcsicmp(s.c_str(), L"katanga") == 0) return SourceKind::Katanga;
     return SourceKind::None;
 }
 

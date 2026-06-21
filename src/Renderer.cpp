@@ -168,8 +168,19 @@ bool Renderer::CopyCaptureToStaging(ID3D11Texture2D* src) {
     if (!ctx_ || !staging_ || !src) return false;
     D3D11_TEXTURE2D_DESC sd{};
     src->GetDesc(&sd);
-    if (sd.Width == staging_w_ && sd.Height == staging_h_) {
-        // Dim-match fast path — no shader needed.
+    // Fast path requires BOTH matching dimensions AND a format compatible
+    // with our B8G8R8A8_UNORM staging. CopyResource silently no-ops on
+    // cross-group format mismatches (e.g. a Geo-11 producer publishing
+    // R10G10B10A2_UNORM HDR), which manifests as a black 3D panel because
+    // the staging never gets written. The scaler path handles any source
+    // format by sampling through an SRV into the staging RTV (OM does the
+    // implicit precision conversion).
+    const bool format_ok =
+        sd.Format == DXGI_FORMAT_B8G8R8A8_UNORM ||
+        sd.Format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB ||
+        sd.Format == DXGI_FORMAT_B8G8R8A8_TYPELESS;
+    if (sd.Width == staging_w_ && sd.Height == staging_h_ && format_ok) {
+        // Dim+format-match fast path — no shader needed.
         ctx_->CopyResource(staging_.Get(), src);
         return true;
     }

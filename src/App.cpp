@@ -2,6 +2,7 @@
 
 #include "Capture.h"
 #include "CaptureDXGI.h"
+#include "CaptureKatanga.h"
 #include "CaptureSource.h"
 #include "Gui.h"
 #include "Logging.h"
@@ -239,6 +240,13 @@ bool App::Start() {
                 if (!cap_) capture_warning = L"WGC + DXGI both refused this monitor — showing test pattern";
             }
         }
+    } else if (kind == SourceKind::Katanga) {
+        // Create succeeds even if no producer is running yet: we open or
+        // create Local\KatangaMappedFile and sit in "waiting" state until a
+        // producer publishes a handle. The test pattern Renderer paints below
+        // is what the user sees until then.
+        cap_ = CaptureKatanga::Create(renderer_.Device());
+        if (!cap_) capture_warning = L"Katanga mapping setup failed — showing test pattern";
     }
 
     UINT staging_w = 0, staging_h = 0;
@@ -246,11 +254,32 @@ bool App::Start() {
         staging_w = wgc->InitialWidth();
         staging_h = wgc->InitialHeight();
     }
+    // Katanga deliberately falls through to the monitor-based default below
+    // even when the producer is already up: pinning staging to a stable size
+    // (output_monitor × 2) lets the scaler handle every source size — both
+    // mid-session producer-side resolution changes and upscale-when-smaller —
+    // without ever resizing the staging texture or restarting the presenter.
     if (staging_w == 0 || staging_h == 0) {
-        // Either test-pattern mode (no cap_) or DXGI fallback (no Initial* getter).
-        // Default to a sensible SBS test-pattern size.
-        staging_w = 2560;
-        staging_h = 720;
+        // Test-pattern mode (no cap_), DXGI fallback (no Initial* getter), or
+        // Katanga waiting (producer hasn't published yet). Size the staging
+        // to the output monitor's resolution × 2 in width — that matches the
+        // SbS layout NV3DLib expects and lines up with the panel a typical
+        // producer is rendering at, so the post-Restart staging will already
+        // be the right size in the common case.
+        HMONITOR fallback_mon = ResolveOutputMonitor();
+        if (!fallback_mon) {
+            fallback_mon = MonitorFromPoint(POINT{0, 0}, MONITOR_DEFAULTTOPRIMARY);
+        }
+        MONITORINFO mi{};
+        mi.cbSize = sizeof(mi);
+        if (fallback_mon && GetMonitorInfoW(fallback_mon, &mi)) {
+            staging_w = static_cast<UINT>(mi.rcMonitor.right  - mi.rcMonitor.left) * 2;
+            staging_h = static_cast<UINT>(mi.rcMonitor.bottom - mi.rcMonitor.top);
+        } else {
+            // Ultimate fallback — no monitor info available at all.
+            staging_w = 2560;
+            staging_h = 720;
+        }
     }
 
     if (!renderer_.CreateFixedStaging(staging_w, staging_h)) {
@@ -259,7 +288,16 @@ bool App::Start() {
         status_extra_ = L"failed to allocate staging texture";
         return false;
     }
-    renderer_.FillTestPattern(0);   // known-good stereo content for first frame
+
+    // For Katanga we always treat the first Tick as the "reveal moment" —
+    // even when the producer is already running, the first TryAcquire is what
+    // flips fse_visible_ on. Suppress the test pattern in this mode so the
+    // user sees their desktop, not stereo bars, while waiting.
+    const bool katanga_mode = (kind == SourceKind::Katanga);
+    waiting_katanga_first_frame_ = katanga_mode;
+    if (!katanga_mode) {
+        renderer_.FillTestPattern(0);   // known-good stereo content for first frame
+    }
 
     settings_.target_monitor = ResolveOutputMonitor();
 
@@ -286,12 +324,16 @@ bool App::Start() {
 
     state_         = AppState::Running;
     status_extra_  = capture_warning;   // empty on the happy path
-    fse_visible_   = true;              // NV3DLib's want_visible_ defaults to true; match
+    fse_visible_   = !katanga_mode;     // hide popup until first Katanga frame; otherwise NV3DLib's default
     fps_t0_        = std::chrono::steady_clock::now();
     fps_frames_    = 0;
     fps_           = 0.0f;
     test_pattern_frame_ = 0;
     tray_.SetStartStopLabel(L"Stop");
+    if (katanga_mode) {
+        presenter_.SetVisible(false);
+        status_extra_ = L"waiting for Katanga producer";
+    }
 
     // VRto3D-style hand-off. Order matters here:
     //   1. Hide the control panel FIRST so it stops being the foreground
@@ -307,7 +349,12 @@ bool App::Start() {
     //      SetForegroundWindow is fragile; the watcher catches anything that
     //      steals focus back in the first few seconds (the game's own
     //      splash-screen window-creation, anti-cheat shims, etc.).
-    if (kind != SourceKind::None) {
+    // Skip the panel-hide + force-focus dance for Katanga: there's no game
+    // window owned by us to yank into focus (the producer's game window lives
+    // in another process and we don't know which one), and HidePanel'ing
+    // ourselves while waiting for a producer would just disappear the only UI
+    // the user has.
+    if (kind != SourceKind::None && kind != SourceKind::Katanga) {
         HWND game_hwnd = src_hwnd;
         if (!game_hwnd && tracked_pid != 0 && tracked_pid != GetCurrentProcessId()) {
             struct Ctx { DWORD pid; HWND result; } ctx{ tracked_pid, nullptr };
@@ -357,6 +404,11 @@ void App::Stop() {
     renderer_.ReleaseStaging();
     if (state_ == AppState::Running) state_ = AppState::Idle;
     tracked_pid_ = 0;
+    if (tracked_process_handle_) {
+        CloseHandle(tracked_process_handle_);
+        tracked_process_handle_ = nullptr;
+    }
+    waiting_katanga_first_frame_ = false;
     tray_.SetStartStopLabel(L"Start");
     // Refresh the source picker so the user gets up-to-date windows /
     // monitors when they pick something different before clicking Start
@@ -476,6 +528,24 @@ void App::StopForceFocusWatcher() {
     }
 }
 
+void App::EnterKatangaWaitingMode() {
+    // Reverse the first-frame reveal: minimize the FSE popup, restore the
+    // control panel, drop the focus watcher targeting the (now gone) game.
+    // Leaves cap_, presenter_, and renderer_ alive so we can resume in place
+    // when another producer publishes.
+    presenter_.SetVisible(false);
+    fse_visible_ = false;
+    StopForceFocusWatcher();
+    tracked_pid_ = 0;
+    if (tracked_process_handle_) {
+        CloseHandle(tracked_process_handle_);
+        tracked_process_handle_ = nullptr;
+    }
+    ShowPanel();
+    waiting_katanga_first_frame_ = true;
+    status_extra_ = L"waiting for Katanga producer";
+}
+
 void App::ReregisterHotkeys() {
     hotkeys_.Clear();
     // Only the two user-facing hotkeys are bound. Quit + show/hide control
@@ -500,6 +570,78 @@ void App::Tick() {
             UINT w = 0, h = 0;
             DXGI_FORMAT fmt = DXGI_FORMAT_UNKNOWN;
             if (cap_->TryAcquire(&src, &w, &h, &fmt) && src) {
+                // First Katanga frame: reveal the FSE popup AND hand focus
+                // to the producer's game window. We never resize staging or
+                // restart on dim differences — the renderer's scaler handles
+                // every size (upscaling when the producer is below display
+                // res, downscaling when above).
+                //
+                // Focus dance: NV3DLib's SW_RESTORE on the popup activates
+                // it, which steals focus from whatever was foreground. For
+                // WGC/DXGI modes we knew the game's HWND at Start and ran
+                // the focus watcher from there; in Katanga the game lives in
+                // a process we don't know about up front, so we infer it
+                // from GetForegroundWindow at the moment of reveal (the
+                // common path: user clicked Start on us, then alt-tabbed /
+                // launched the game — game is foreground when its producer
+                // first publishes a frame). HidePanel + focus watcher mirrors
+                // the WGC path's hand-off so input keeps going to the game.
+                if (waiting_katanga_first_frame_) {
+                    Log(NV3D::LogLevel::Info,
+                        L"App::Tick  first Katanga frame %ux%u (staging %ux%u) — revealing FSE",
+                        w, h, renderer_.StagingWidth(), renderer_.StagingHeight());
+                    waiting_katanga_first_frame_ = false;
+
+                    HWND  prev_fg     = GetForegroundWindow();
+                    DWORD prev_fg_pid = 0;
+                    if (prev_fg) GetWindowThreadProcessId(prev_fg, &prev_fg_pid);
+                    const bool game_was_foreground =
+                        prev_fg && prev_fg_pid != 0 && prev_fg_pid != GetCurrentProcessId();
+
+                    fse_visible_ = true;
+                    presenter_.SetVisible(true);
+                    status_extra_.clear();
+
+                    if (game_was_foreground) {
+                        Log(NV3D::LogLevel::Info,
+                            L"App::Tick  Katanga reveal: handing focus to game pid=%lu",
+                            (unsigned long)prev_fg_pid);
+                        HidePanel();
+                        // Pump so the panel hide's WM_KILLFOCUS lands before
+                        // the watcher starts yanking foreground around — same
+                        // sequencing the WGC path uses.
+                        MSG pump;
+                        for (int i = 0; i < 3; ++i) {
+                            Sleep(10);
+                            while (PeekMessageW(&pump, nullptr, 0, 0, PM_REMOVE)) {
+                                TranslateMessage(&pump);
+                                DispatchMessageW(&pump);
+                            }
+                        }
+                        tracked_pid_ = prev_fg_pid;
+                        StartForceFocusWatcher(tracked_pid_);
+                        // Open a SYNCHRONIZE handle so Tick can detect game
+                        // exit and auto-minimize. Geo-11 leaves the mapping
+                        // slot pointed at a dead handle on exit, so the
+                        // CaptureKatanga slot-grace timer alone won't catch
+                        // an ungraceful producer death.
+                        if (tracked_process_handle_) {
+                            CloseHandle(tracked_process_handle_);
+                            tracked_process_handle_ = nullptr;
+                        }
+                        tracked_process_handle_ = OpenProcess(SYNCHRONIZE, FALSE, prev_fg_pid);
+                        if (!tracked_process_handle_) {
+                            Log(NV3D::LogLevel::Warning,
+                                L"App::Tick  OpenProcess(SYNCHRONIZE, pid=%lu) failed err=%lu — "
+                                L"producer-death detection disabled this session",
+                                (unsigned long)prev_fg_pid, GetLastError());
+                        }
+                    } else {
+                        Log(NV3D::LogLevel::Info,
+                            L"App::Tick  Katanga reveal: no game foreground detected — "
+                            L"user will need to click the game window to give it focus");
+                    }
+                }
                 renderer_.CopyCaptureToStaging(src);
                 last_src_w_   = w;
                 last_src_h_   = h;
@@ -511,6 +653,27 @@ void App::Tick() {
                 Stop();
                 state_ = AppState::SourceLost;
                 status_extra_ = L"source closed";
+            } else if (cap_->IsDisconnected()) {
+                // Katanga: producer went quiet past the grace window. Don't
+                // tear the session down — fold the UI back to "waiting" and
+                // let the same CaptureKatanga re-detect the next producer.
+                Log(NV3D::LogLevel::Info,
+                    L"App::Tick  Katanga producer disconnected — returning to waiting state");
+                EnterKatangaWaitingMode();
+                if (auto* kat = dynamic_cast<CaptureKatanga*>(cap_.get())) {
+                    kat->ResetForReconnect();
+                }
+            } else if (tracked_process_handle_ &&
+                       WaitForSingleObject(tracked_process_handle_, 0) == WAIT_OBJECT_0) {
+                // Producer game process exited. The mapping slot may still
+                // hold a stale handle (Geo-11 doesn't clear it on exit), so
+                // CaptureKatanga can't detect this on its own — we have to.
+                Log(NV3D::LogLevel::Info,
+                    L"App::Tick  Katanga producer process exited — returning to waiting state");
+                EnterKatangaWaitingMode();
+                if (auto* kat = dynamic_cast<CaptureKatanga*>(cap_.get())) {
+                    kat->ResetForReconnect();
+                }
             }
         } else {
             // No capture session — animate the test pattern so the user can

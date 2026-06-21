@@ -18,6 +18,7 @@
     <ClCompile Include="src\App.cpp">              <Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="src\Capture.cpp">          <Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="src\CaptureDXGI.cpp">      <Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="src\CaptureKatanga.cpp">   <Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="src\Gui.cpp">              <Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="src\HotkeyManager.cpp">    <Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="src\Logging.cpp">          <Filter>Source Files</Filter></ClCompile>
@@ -31,6 +32,7 @@
     <ClInclude Include="src\App.h">                <Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="src\Capture.h">            <Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="src\CaptureDXGI.h">        <Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="src\CaptureKatanga.h">     <Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="src\CaptureSource.h">      <Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="src\Gui.h">                <Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="src\HotkeyManager.h">      <Filter>Header Files</Filter></ClInclude>

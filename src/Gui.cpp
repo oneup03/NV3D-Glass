@@ -151,7 +151,7 @@ void Gui::DrawCaptureSourceSection(App& app) {
 
     Settings& s = app.settings();
     int kind_idx = static_cast<int>(s.source_kind);
-    const char* kinds[] = { "None", "Window", "Monitor" };
+    const char* kinds[] = { "None", "Window", "Monitor", "Katanga" };
     if (ImGui::Combo("Source kind", &kind_idx, kinds, IM_ARRAYSIZE(kinds))) {
         s.source_kind = static_cast<SourceKind>(kind_idx);
         s.source_id.clear();
@@ -194,6 +194,9 @@ void Gui::DrawCaptureSourceSection(App& app) {
             }
             ImGui::EndCombo();
         }
+    } else if (s.source_kind == SourceKind::Katanga) {
+        ImGui::TextDisabled("Listens on Local\\KatangaMappedFile.");
+        ImGui::TextDisabled("Producer can launch before or after Start — we'll wait.");
     }
 
     if (ImGui::Button("Refresh sources")) RefreshSources();

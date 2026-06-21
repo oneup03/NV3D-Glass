@@ -49,6 +49,11 @@ public:
 
 private:
     bool  fse_visible_ = true;
+    // True between Start and the first successful Katanga frame. While set,
+    // the FSE popup is hidden and the test pattern is suppressed so the user
+    // just sees their desktop until the producer comes online. The first
+    // TryAcquire that yields a frame flips this off and reveals the popup.
+    bool  waiting_katanga_first_frame_ = false;
 public:
     void  Quit();
 
@@ -108,6 +113,13 @@ private:
     // the ForceFocus watcher on every show transition. 0 = no tracked game.
     DWORD                              tracked_pid_ = 0;
 
+    // Katanga: a SYNCHRONIZE handle to the producer game's process, opened
+    // at the reveal step. Polled with WaitForSingleObject each Tick so we
+    // can fold the UI back to waiting state when the game exits (Geo-11
+    // doesn't zero the mapping slot on death, so the slot-grace-timer
+    // wouldn't catch this).
+    HANDLE                             tracked_process_handle_ = nullptr;
+
     // Per-watcher stop flag. Each StartForceFocusWatcher call drops the
     // previous watcher's shared_ptr and creates a fresh atomic so the old
     // detached thread sees stop and bails on its next tick. Hiding the FSE
@@ -116,6 +128,13 @@ private:
 
     void StartForceFocusWatcher(DWORD pid);
     void StopForceFocusWatcher();
+
+    // Soft transition back to Katanga's "waiting for producer" UI: hide the
+    // FSE popup, restore the control panel, drop the focus watcher. Reverse
+    // of the reveal sequence in Tick. Caller is responsible for calling
+    // ResetForReconnect() on the CaptureKatanga so the next TryAcquire can
+    // detect a new producer.
+    void EnterKatangaWaitingMode();
 
     // Telemetry / status
     UINT                               last_src_w_ = 0;
