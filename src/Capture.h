@@ -35,6 +35,14 @@ public:
     UINT InitialWidth()  const;
     UINT InitialHeight() const;
 
+    // For a window source, the sub-rect of the captured frame that
+    // corresponds to the window's client area — i.e. excluding the title
+    // bar, borders, and the invisible DWM shadow. Returns the full frame
+    // rect for monitor sources / when client-area detection fails. Callers
+    // use this to crop the title bar out of the stereo output via
+    // CopySubresourceRegion at staging-write time.
+    RECT ClientAreaInCapture() const;
+
     // Public so file-scope helpers in Capture.cpp can name the type. The
     // pointer itself stays owned by us.
     struct Impl;

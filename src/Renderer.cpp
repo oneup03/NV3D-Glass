@@ -1,5 +1,6 @@
 #include "Renderer.h"
 
+#include "Logging.h"
 #include "imgui.h"
 #include "imgui_impl_win32.h"
 #include "imgui_impl_dx11.h"
@@ -88,17 +89,26 @@ bool Renderer::Init(HWND control_panel_hwnd) {
 }
 
 void Renderer::Shutdown() {
+    // Step-by-step logs so a freeze in any one release pinpoints itself.
+    // Same rationale as App::Shutdown's checkpoints — the freeze on quit
+    // goes silent through this path; we need to know which step blocks.
     if (imgui_init_) {
         ImGui_ImplDX11_Shutdown();
         ImGui_ImplWin32_Shutdown();
         ImGui::DestroyContext();
         imgui_init_ = false;
+        Log(NV3D::LogLevel::Info, L"Renderer::Shutdown  ImGui backend torn down");
     }
     ReleaseStaging();
     rtv_.Reset();
+    Log(NV3D::LogLevel::Info, L"Renderer::Shutdown  releasing swap chain");
+    if (ctx_) ctx_->ClearState();
+    if (ctx_) ctx_->Flush();
     swap_.Reset();
+    Log(NV3D::LogLevel::Info, L"Renderer::Shutdown  swap chain released");
     ctx_.Reset();
     d3d_.Reset();
+    Log(NV3D::LogLevel::Info, L"Renderer::Shutdown  D3D11 device released");
     hwnd_ = nullptr;
 }
 
@@ -184,6 +194,43 @@ bool Renderer::CopyCaptureToStaging(ID3D11Texture2D* src) {
         ctx_->CopyResource(staging_.Get(), src);
         return true;
     }
+    return ScaleCaptureToStaging(src);
+}
+
+bool Renderer::CopyCaptureRegionToStaging(ID3D11Texture2D* src, const RECT& src_box) {
+    if (!ctx_ || !staging_ || !src) return false;
+    const LONG box_w = src_box.right  - src_box.left;
+    const LONG box_h = src_box.bottom - src_box.top;
+    if (box_w <= 0 || box_h <= 0) return CopyCaptureToStaging(src);
+
+    D3D11_TEXTURE2D_DESC sd{};
+    src->GetDesc(&sd);
+    const bool format_ok =
+        sd.Format == DXGI_FORMAT_B8G8R8A8_UNORM ||
+        sd.Format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB ||
+        sd.Format == DXGI_FORMAT_B8G8R8A8_TYPELESS;
+
+    // Fast path: requested sub-rect already matches staging dims + format is
+    // BGRA. CopySubresourceRegion is a 1:1 GPU memcpy of the rectangle —
+    // much cheaper than the scaler shader pass, and the typical case once
+    // staging is sized to the source's client-area dim at session start.
+    if (static_cast<UINT>(box_w) == staging_w_ &&
+        static_cast<UINT>(box_h) == staging_h_ && format_ok) {
+        D3D11_BOX box{};
+        box.left   = static_cast<UINT>(src_box.left);
+        box.top    = static_cast<UINT>(src_box.top);
+        box.front  = 0;
+        box.right  = static_cast<UINT>(src_box.right);
+        box.bottom = static_cast<UINT>(src_box.bottom);
+        box.back   = 1;
+        ctx_->CopySubresourceRegion(staging_.Get(), 0, 0, 0, 0, src, 0, &box);
+        return true;
+    }
+
+    // Box dim doesn't match staging — fall through to the scaler. The scaler
+    // currently samples src whole-image; cropping via UV would be a nicer
+    // extension but isn't needed for the common case where staging is sized
+    // to match the client area at session start.
     return ScaleCaptureToStaging(src);
 }
 

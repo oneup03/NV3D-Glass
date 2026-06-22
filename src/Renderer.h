@@ -41,6 +41,13 @@ public:
     // sub-region copy (smaller src). Sources larger than staging are clipped.
     // Returns false on a dim mismatch we can't reconcile.
     bool             CopyCaptureToStaging(ID3D11Texture2D* src);
+
+    // As above, but copy only a sub-rect of src (e.g. the client area of a
+    // captured window, stripped of title bar / borders). Src box dims must
+    // equal staging dims for the fast CopySubresourceRegion path; otherwise
+    // falls through to the scaler shader. Pass an empty RECT (or a rect
+    // covering the full src) to behave like CopyCaptureToStaging.
+    bool             CopyCaptureRegionToStaging(ID3D11Texture2D* src, const RECT& src_box);
     // Fill staging with the DX11Sample-style stereo test pattern (red+quad in
     // the left eye half, green+quad in the right; a parallax-shifted white
     // square between them so stereo fusion is obvious under shutter glasses).

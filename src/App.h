@@ -11,6 +11,7 @@
 #include <chrono>
 #include <memory>
 #include <string>
+#include <thread>
 
 namespace nv3dg {
 
@@ -104,6 +105,10 @@ private:
 
     Renderer                           renderer_;
     NV3DPresenter                      presenter_;
+    // Crop region applied to each captured frame before it lands in staging
+    // — used to strip the title bar / borders from window-source captures.
+    // Empty (zero-area) rect means "no crop, copy the whole frame".
+    RECT                               capture_src_region_{0, 0, 0, 0};
     HotkeyManager                      hotkeys_;
     TrayIcon                           tray_;
     std::unique_ptr<Gui>               gui_;
@@ -120,10 +125,18 @@ private:
     // wouldn't catch this).
     HANDLE                             tracked_process_handle_ = nullptr;
 
-    // Per-watcher stop flag. Each StartForceFocusWatcher call drops the
-    // previous watcher's shared_ptr and creates a fresh atomic so the old
-    // detached thread sees stop and bails on its next tick. Hiding the FSE
-    // (Ctrl+F8 off, button, Stop) clears this and the watcher dies.
+    // Focus watcher state. The thread is JOINABLE (not detached) so we can
+    // guarantee it has fully exited — and therefore released any
+    // AttachThreadInput pair it was holding — before our process moves on.
+    //
+    // A detached watcher is the root cause of the "whole-display freeze on
+    // quit, cursor frozen, reboot required" symptom: if the process exits
+    // (or Shutdown advances) while the watcher is mid-ForceFocus, the OS-
+    // wide input chain is left attached to a dying thread and wedges
+    // system-wide. Joining caps the wedge window at one watcher iteration.
+    // VRto3D's NvStereoDx9Presenter has the same detached pattern at line
+    // ~1303 and the same symptom; the fix ports cleanly.
+    std::thread                        focus_watcher_thread_;
     std::shared_ptr<std::atomic<bool>> focus_watcher_stop_;
 
     void StartForceFocusWatcher(DWORD pid);

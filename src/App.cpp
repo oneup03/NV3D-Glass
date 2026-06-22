@@ -52,7 +52,14 @@ void ForceFocusToGame(HWND target) {
     DWORD target_tid = GetWindowThreadProcessId(target, nullptr);
     if (!target_tid) return;
     AttachThreadInput(my_tid, target_tid, TRUE);
-    ShowWindow(target, SW_RESTORE);
+    // SW_RESTORE only when the target is actually minimized — calling
+    // SW_RESTORE on a MAXIMIZED window un-maximizes it (per MSDN), which
+    // shrinks the captured source mid-session and produces a picture-in-
+    // picture artifact because our staging is sized to the pre-shrink
+    // client area. Leave maximized / normal windows in their current state.
+    if (IsIconic(target)) {
+        ShowWindow(target, SW_RESTORE);
+    }
     SetForegroundWindow(target);
     SetFocus(target);
     SetActiveWindow(target);
@@ -101,17 +108,30 @@ bool App::Init(HINSTANCE hInstance) {
 }
 
 void App::Shutdown() {
+    // Step-by-step logs so a freeze in any one step pinpoints itself in the
+    // log. The freeze symptom we're hunting (whole-display freeze on quit
+    // after a session) goes silent somewhere in this chain — without these
+    // checkpoints we can't tell whether it's tray removal, ImGui DX11
+    // shutdown, swap chain release, the control-panel DestroyWindow, etc.
+    Log(NV3D::LogLevel::Info, L"App::Shutdown  begin");
     Stop();
+    Log(NV3D::LogLevel::Info, L"App::Shutdown  after Stop");
     PersistPanelGeometry();
     if (!ini_path_.empty()) SaveSettings(settings_, ini_path_.c_str());
+    Log(NV3D::LogLevel::Info, L"App::Shutdown  settings persisted");
 
     tray_.Remove();
+    Log(NV3D::LogLevel::Info, L"App::Shutdown  tray removed");
     hotkeys_.Clear();
+    Log(NV3D::LogLevel::Info, L"App::Shutdown  hotkeys cleared");
     gui_.reset();
+    Log(NV3D::LogLevel::Info, L"App::Shutdown  gui_ reset");
     renderer_.Shutdown();
+    Log(NV3D::LogLevel::Info, L"App::Shutdown  renderer_ shutdown done");
 
     if (hwnd_)          { DestroyWindow(hwnd_);                 hwnd_          = nullptr; }
     if (wndclass_atom_) { UnregisterClassW(kWndClass, hinstance_); wndclass_atom_ = 0;     }
+    Log(NV3D::LogLevel::Info, L"App::Shutdown  control panel destroyed");
     ShutdownFileLog();
 }
 
@@ -233,6 +253,13 @@ bool App::Start() {
     } else if (kind == SourceKind::Monitor) {
         if (!src_hmon) {
             capture_warning = L"selected monitor not connected — showing test pattern";
+        } else if (HMONITOR out_hmon = ResolveOutputMonitor();
+                   out_hmon && out_hmon == src_hmon) {
+            // Both WGC monitor mode and DXGI Output Duplication scan out the
+            // composited desktop including our FSE popup. Capturing the same
+            // monitor we're presenting on recurses (every frame contains the
+            // previous frame's output). Refuse before we open the session.
+            capture_warning = L"capture and output monitor are the same — pick a different display to avoid a feedback loop";
         } else {
             cap_ = CaptureWGC::CreateForMonitor(renderer_.Device(), src_hmon);
             if (!cap_) {
@@ -250,9 +277,23 @@ bool App::Start() {
     }
 
     UINT staging_w = 0, staging_h = 0;
+    capture_src_region_ = RECT{0, 0, 0, 0};
     if (auto* wgc = dynamic_cast<CaptureWGC*>(cap_.get())) {
-        staging_w = wgc->InitialWidth();
-        staging_h = wgc->InitialHeight();
+        // Crop to the window's client area — strips the title bar, borders,
+        // and DWM shadow so they don't get sliced as part of the SbS layout.
+        // For monitor sources / borderless-fullscreen windows ClientAreaInCapture
+        // returns the full frame, so this stays a no-op.
+        const RECT client = wgc->ClientAreaInCapture();
+        const LONG cw = client.right - client.left;
+        const LONG ch = client.bottom - client.top;
+        if (cw > 0 && ch > 0) {
+            staging_w = static_cast<UINT>(cw);
+            staging_h = static_cast<UINT>(ch);
+            capture_src_region_ = client;
+        } else {
+            staging_w = wgc->InitialWidth();
+            staging_h = wgc->InitialHeight();
+        }
     }
     // Katanga deliberately falls through to the monitor-based default below
     // even when the producer is already up: pinning staging to a stable size
@@ -486,14 +527,15 @@ void App::RefreshSources() {
 }
 
 void App::StartForceFocusWatcher(DWORD pid) {
-    // Always drop any previous watcher first so we don't end up with two
-    // detached threads both yanking foreground.
+    // Always drop any previous watcher first. Stop also JOINS, so we know the
+    // old thread has released any AttachThreadInput pair before we spawn the
+    // new one — no two-watcher-at-once window.
     StopForceFocusWatcher();
     if (pid == 0 || pid == GetCurrentProcessId()) return;
 
     focus_watcher_stop_ = std::make_shared<std::atomic<bool>>(false);
     auto stop = focus_watcher_stop_;
-    std::thread([pid, stop]() {
+    focus_watcher_thread_ = std::thread([pid, stop]() {
         for (int i = 0; i < 16; ++i) {
             if (stop->load(std::memory_order_relaxed)) return;
             struct Ctx { DWORD pid; HWND result; } c{ pid, nullptr };
@@ -518,14 +560,23 @@ void App::StartForceFocusWatcher(DWORD pid) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
             }
         }
-    }).detach();
+    });
 }
 
 void App::StopForceFocusWatcher() {
+    // Set the stop flag THEN join. The watcher polls the flag between every
+    // 100 ms sleep and around each ForceFocus iteration, so worst-case join
+    // wait is bounded by one in-flight ForceFocusToGame call (~100 ms total:
+    // two 50 ms sleeps plus the Win32 calls between AttachThreadInput TRUE
+    // and FALSE). Joining is critical for shutdown safety — see App.h for the
+    // freeze-on-quit failure mode this prevents.
     if (focus_watcher_stop_) {
         focus_watcher_stop_->store(true, std::memory_order_relaxed);
-        focus_watcher_stop_.reset();
     }
+    if (focus_watcher_thread_.joinable()) {
+        focus_watcher_thread_.join();
+    }
+    focus_watcher_stop_.reset();
 }
 
 void App::EnterKatangaWaitingMode() {
@@ -642,7 +693,13 @@ void App::Tick() {
                             L"user will need to click the game window to give it focus");
                     }
                 }
-                renderer_.CopyCaptureToStaging(src);
+                const LONG rw = capture_src_region_.right  - capture_src_region_.left;
+                const LONG rh = capture_src_region_.bottom - capture_src_region_.top;
+                if (rw > 0 && rh > 0) {
+                    renderer_.CopyCaptureRegionToStaging(src, capture_src_region_);
+                } else {
+                    renderer_.CopyCaptureToStaging(src);
+                }
                 last_src_w_   = w;
                 last_src_h_   = h;
                 last_src_fmt_ = (UINT)fmt;

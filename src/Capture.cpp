@@ -38,6 +38,10 @@ struct CaptureWGC::Impl {
     winrt::event_token                      closed_token{};
     std::atomic<bool>                       lost{false};
     winrt::SizeInt32                        size{0, 0};
+    // Sub-rect of the captured frame that corresponds to the window's client
+    // area (i.e. with the title bar / borders / DWM shadow stripped).
+    // Empty / full-frame for monitor sources.
+    RECT                                    client_area{0, 0, 0, 0};
 };
 
 namespace {
@@ -101,6 +105,34 @@ std::unique_ptr<CaptureWGC> CaptureWGC::CreateForWindow(ID3D11Device* dev, HWND 
         hwnd, winrt::guid_of<winrt::GraphicsCaptureItem>(), winrt::put_abi(out->impl_->item));
     if (FAILED(hr) || !out->impl_->item) return nullptr;
     if (!BuildSession(*out->impl_, dev))  return nullptr;
+
+    // Compute the client area's position within the captured frame so callers
+    // can crop out the title bar / borders / DWM shadow at staging-write time.
+    // WGC captures the FULL window as DWM sees it (including the shadow on
+    // Win10+), so we anchor on the window's outer rect and find the client
+    // origin in screen space relative to that.
+    RECT outer{};
+    if (GetWindowRect(hwnd, &outer)) {
+        RECT cr{};
+        POINT client_origin{ 0, 0 };
+        if (GetClientRect(hwnd, &cr) && ClientToScreen(hwnd, &client_origin)) {
+            const LONG ox = client_origin.x - outer.left;
+            const LONG oy = client_origin.y - outer.top;
+            const LONG cw = cr.right  - cr.left;
+            const LONG ch = cr.bottom - cr.top;
+            const LONG fw = out->impl_->size.Width;
+            const LONG fh = out->impl_->size.Height;
+            // Clamp into the captured frame in case WGC's size and
+            // GetWindowRect disagree (they can by a pixel or two).
+            const LONG l = (ox < 0) ? 0 : (ox > fw ? fw : ox);
+            const LONG t = (oy < 0) ? 0 : (oy > fh ? fh : oy);
+            const LONG r = ((ox + cw) > fw) ? fw : (ox + cw);
+            const LONG b = ((oy + ch) > fh) ? fh : (oy + ch);
+            if (r > l && b > t) {
+                out->impl_->client_area = RECT{ l, t, r, b };
+            }
+        }
+    }
     return out;
 }
 
@@ -183,6 +215,15 @@ UINT CaptureWGC::InitialWidth() const {
 
 UINT CaptureWGC::InitialHeight() const {
     return (impl_ ? static_cast<UINT>(impl_->size.Height) : 0u);
+}
+
+RECT CaptureWGC::ClientAreaInCapture() const {
+    if (!impl_) return RECT{0, 0, 0, 0};
+    const RECT& c = impl_->client_area;
+    if (c.right > c.left && c.bottom > c.top) return c;
+    // Fall back to the full captured frame (monitor sources, or window
+    // sources where client-area detection didn't produce a sane rect).
+    return RECT{ 0, 0, impl_->size.Width, impl_->size.Height };
 }
 
 void CaptureWGC::Stop() {
