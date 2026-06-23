@@ -98,13 +98,14 @@ workload (v143 toolset, Windows 10 SDK).
 ```powershell
 git clone --recurse-submodules https://github.com/oneup03/NV3D-Glass.git
 cd NV3D-Glass
-.\external\NV3D-Lib\tools\build.ps1 -Configuration Release-MT -Platform x64
-msbuild NV3D-Glass.sln /p:Configuration=Release-MT /p:Platform=x64
+.\tools\build.ps1
 ```
 
-The vcxproj's PreBuildEvent runs the NV3DLib build for you, so the
-second step alone is normally enough. Output is at
-`bin\x64\Release-MT\NV3D-Glass.exe`.
+`tools/build.ps1` locates MSBuild via `vswhere` (no Developer Command
+Prompt needed) and builds the default Release-MT|x64. The vcxproj's
+PreBuildEvent builds NV3DLib first (lib only, samples skipped). Pass
+`-Configuration Debug-MT` / `-Target Rebuild` / etc. for other variants.
+Output: `bin\x64\Release-MT\NV3D-Glass.exe`.
 
 **In VS Code**: open the folder, then **Ctrl+Shift+B** runs the default
 build task (Release-MT|x64). **F5** launches the built .exe under the

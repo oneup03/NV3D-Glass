@@ -3,19 +3,19 @@
     "tasks": [
         {
             "label": "build (Release-MT|x64)",
-            "type": "shell",
-            "command": "msbuild",
+            "type": "process",
+            "command": "powershell.exe",
             "args": [
-                "NV3D-Glass.sln",
-                "/p:Configuration=Release-MT",
-                "/p:Platform=x64",
-                "/m",
-                "/nologo",
-                "/v:m"
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                "${workspaceFolder}\\tools\\build.ps1",
+                "-Configuration",
+                "Release-MT",
+                "-Platform",
+                "x64"
             ],
-            "options": {
-                "cwd": "${workspaceFolder}"
-            },
             "group": {
                 "kind": "build",
                 "isDefault": true
@@ -26,7 +26,55 @@
                 "clear": true
             },
             "problemMatcher": "$msCompile",
-            "detail": "Builds NV3D-Glass. The vcxproj's PreBuildEvent first builds NV3DLib (lib only, samples skipped via -Target NV3DLib)."
+            "detail": "Builds NV3D-Glass. The vcxproj's PreBuildEvent first builds NV3DLib (lib only, samples skipped)."
+        },
+        {
+            "label": "rebuild (Release-MT|x64)",
+            "type": "process",
+            "command": "powershell.exe",
+            "args": [
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                "${workspaceFolder}\\tools\\build.ps1",
+                "-Configuration",
+                "Release-MT",
+                "-Platform",
+                "x64",
+                "-Target",
+                "Rebuild"
+            ],
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared",
+                "clear": true
+            },
+            "problemMatcher": "$msCompile"
+        },
+        {
+            "label": "clean (Release-MT|x64)",
+            "type": "process",
+            "command": "powershell.exe",
+            "args": [
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                "${workspaceFolder}\\tools\\build.ps1",
+                "-Configuration",
+                "Release-MT",
+                "-Platform",
+                "x64",
+                "-Target",
+                "Clean"
+            ],
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared",
+                "clear": true
+            },
+            "problemMatcher": "$msCompile"
         },
         {
             "label": "build NV3DLib only (Release-MT|x64)",
@@ -75,51 +123,6 @@
             },
             "problemMatcher": "$msCompile",
             "detail": "Builds NV3DLib AND the DX11/DX12/OGL/Vulkan sample apps. Use when working on or verifying the samples."
-        },
-        {
-            "label": "rebuild (Release-MT|x64)",
-            "type": "shell",
-            "command": "msbuild",
-            "args": [
-                "NV3D-Glass.sln",
-                "/p:Configuration=Release-MT",
-                "/p:Platform=x64",
-                "/t:Rebuild",
-                "/m",
-                "/nologo",
-                "/v:m"
-            ],
-            "options": {
-                "cwd": "${workspaceFolder}"
-            },
-            "presentation": {
-                "reveal": "always",
-                "panel": "shared",
-                "clear": true
-            },
-            "problemMatcher": "$msCompile"
-        },
-        {
-            "label": "clean (Release-MT|x64)",
-            "type": "shell",
-            "command": "msbuild",
-            "args": [
-                "NV3D-Glass.sln",
-                "/p:Configuration=Release-MT",
-                "/p:Platform=x64",
-                "/t:Clean",
-                "/nologo",
-                "/v:m"
-            ],
-            "options": {
-                "cwd": "${workspaceFolder}"
-            },
-            "presentation": {
-                "reveal": "always",
-                "panel": "shared",
-                "clear": true
-            },
-            "problemMatcher": "$msCompile"
         }
     ]
 }
