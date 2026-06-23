@@ -1,0 +1,22 @@
+{
+    "files.associations": {
+        "*.h": "cpp",
+        "*.hpp": "cpp",
+        "*.inl": "cpp"
+    },
+    "C_Cpp.default.cppStandard": "c++17",
+    "C_Cpp.default.intelliSenseMode": "windows-msvc-x64",
+    "C_Cpp.default.includePath": [
+        "${workspaceFolder}/src",
+        "${workspaceFolder}/external/NV3D-Lib/NV3DLib/include",
+        "${workspaceFolder}/external/imgui",
+        "${workspaceFolder}/external/imgui/backends"
+    ],
+    "C_Cpp.default.defines": [
+        "WIN32_LEAN_AND_MEAN",
+        "NOMINMAX",
+        "_UNICODE",
+        "UNICODE",
+        "_CRT_SECURE_NO_WARNINGS"
+    ]
+}

@@ -1,0 +1,99 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "build (Release-MT|x64)",
+            "type": "process",
+            "command": "powershell.exe",
+            "args": [
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                "${workspaceFolder}\\external\\NV3D-Lib\\tools\\build.ps1",
+                "-Configuration",
+                "Release-MT",
+                "-Platform",
+                "x64"
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared",
+                "clear": true
+            },
+            "problemMatcher": "$msCompile",
+            "dependsOrder": "sequence",
+            "dependsOn": []
+        },
+        {
+            "label": "build NV3D-Glass.sln (Release-MT|x64)",
+            "type": "shell",
+            "command": "msbuild",
+            "args": [
+                "NV3D-Glass.sln",
+                "/p:Configuration=Release-MT",
+                "/p:Platform=x64",
+                "/nologo",
+                "/v:m"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared",
+                "clear": true
+            },
+            "problemMatcher": "$msCompile",
+            "detail": "Direct MSBuild of the app solution. The vcxproj's PreBuildEvent rebuilds NV3DLib as needed, so this is normally enough on its own."
+        },
+        {
+            "label": "rebuild (Release-MT|x64)",
+            "type": "shell",
+            "command": "msbuild",
+            "args": [
+                "NV3D-Glass.sln",
+                "/p:Configuration=Release-MT",
+                "/p:Platform=x64",
+                "/t:Rebuild",
+                "/nologo",
+                "/v:m"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared",
+                "clear": true
+            },
+            "problemMatcher": "$msCompile"
+        },
+        {
+            "label": "clean (Release-MT|x64)",
+            "type": "shell",
+            "command": "msbuild",
+            "args": [
+                "NV3D-Glass.sln",
+                "/p:Configuration=Release-MT",
+                "/p:Platform=x64",
+                "/t:Clean",
+                "/nologo",
+                "/v:m"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared",
+                "clear": true
+            },
+            "problemMatcher": "$msCompile"
+        }
+    ]
+}

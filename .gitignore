@@ -18,8 +18,13 @@ out/
 x64/
 Win32/
 
-## VS Code
-.vscode/
+## VS Code — keep tasks/launch/settings/extensions for shared dev experience;
+## ignore everything else (workspace storage, history, etc.)
+.vscode/*
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/settings.json
+!.vscode/extensions.json
 
 ## Runtime
 NV3D-Glass.ini

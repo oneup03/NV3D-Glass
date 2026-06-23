@@ -1,0 +1,87 @@
+name: build-and-prerelease
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'external/**'
+      - 'NV3D-Glass.vcxproj'
+      - 'NV3D-Glass.vcxproj.filters'
+      - 'NV3D-Glass.sln'
+      - '.github/workflows/release.yml'
+  workflow_dispatch:
+
+# Cancel in-flight runs of the same workflow on the same branch — only the
+# newest commit's artifact matters for a "latest" pre-release.
+concurrency:
+  group: build-and-prerelease-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write  # needed to create/update the GitHub Release
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0  # so we can compute commit count + short sha for the release body
+
+      - name: Set up MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Build NV3D-Glass (Release-MT|x64)
+        shell: pwsh
+        run: |
+          msbuild NV3D-Glass.sln `
+            /p:Configuration=Release-MT `
+            /p:Platform=x64 `
+            /m `
+            /nologo `
+            /v:minimal
+
+      - name: Stage artifact
+        id: stage
+        shell: pwsh
+        run: |
+          $bin = "bin/x64/Release-MT"
+          if (-not (Test-Path "$bin/NV3D-Glass.exe")) {
+            throw "build output missing at $bin/NV3D-Glass.exe"
+          }
+          $stage = "stage/NV3D-Glass"
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+          Copy-Item "$bin/NV3D-Glass.exe" $stage
+          Copy-Item "README.md"            $stage -ErrorAction SilentlyContinue
+          Copy-Item "LICENSE"              $stage -ErrorAction SilentlyContinue
+          $short = "${{ github.sha }}".Substring(0,7)
+          $zip   = "NV3D-Glass-latest-x64.zip"
+          Compress-Archive -Path "$stage/*" -DestinationPath $zip -Force
+          "zip=$zip"     | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "short=$short" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: Publish 'latest' pre-release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: "Latest build (${{ steps.stage.outputs.short }})"
+          prerelease: true
+          # Overwrite the existing 'latest' release each run so users always
+          # get the newest build at the same URL. The tag is force-moved to
+          # the current commit.
+          make_latest: "false"
+          target_commitish: ${{ github.sha }}
+          body: |
+            Rolling pre-release built from `${{ github.sha }}` on ${{ github.event.head_commit.timestamp }}.
+
+            **Download**: `NV3D-Glass-latest-x64.zip` (below). Contains
+            `NV3D-Glass.exe` (Release-MT, static CRT, x64). See `README.md`
+            for setup and usage.
+
+            > This release is overwritten on every push to `main`. For
+            > stable versions, check the tagged releases.
+          files: ${{ steps.stage.outputs.zip }}

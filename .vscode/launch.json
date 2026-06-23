@@ -1,0 +1,17 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Launch NV3D-Glass (Release-MT|x64)",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}\\bin\\x64\\Release-MT\\NV3D-Glass.exe",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}\\bin\\x64\\Release-MT",
+            "environment": [],
+            "console": "integratedTerminal",
+            "preLaunchTask": "build (Release-MT|x64)"
+        }
+    ]
+}
