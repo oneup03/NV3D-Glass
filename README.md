@@ -8,20 +8,23 @@ captured app; runs as a standalone .exe with an ImGui control panel.
 ## Requirements
 
 - Windows 10 1903+ / Windows 11 (WGC capture)
-- NVIDIA GeForce GPU with the legacy 3D Vision driver installed (425.31 or
-  one of the community-extended builds for newer cards)
-- A 3D Vision-certified display (120 Hz panel + IR emitter, or HDMI 1.4
-  frame-packed display) configured as a 3D Vision target in NVCP
+- NVIDIA GPU with the legacy 3D Vision driver installed. The driver works on
+  **any NVIDIA GPU and any current display-driver version** — it's installed
+  alongside your main driver, not bundled into it. See
+  [3DVision4All / Native install](https://oneup03.github.io/3DVision4All/docs/Native)
+  for step-by-step instructions.
+- A 3D Vision-certified display (120 Hz panel + IR emitter) configured as a 3D Vision target in NVCP
 - "Set up stereoscopic 3D" enabled in the NVIDIA Control Panel
 - For source: any windowed app that already produces side-by-side stereo
   (one frame split into left half / right half), or a
-  [Katanga](https://github.com/bo3b/Katanga) / Geo-11 producer
+  [Geo-11](https://helixmod.blogspot.com/2022/06/announcing-new-geo-11-3d-driver.html)
+  producer (see the Geo-11 setup note below)
 
 ## Install
 
 Download the latest pre-release from the
 [Releases](../../releases) page, unzip, and run `NV3D-Glass.exe`. The
-binary is self-contained (statically-linked CRT) — no installer.
+binary is self-contained — no installer.
 
 ## Quick start
 
@@ -69,8 +72,8 @@ button quits the app (and tears down the FSE popup cleanly).
   shutter-friendly backlight strobing. Disabled if your panel isn't
   in the DB or already matches.
 - **3DVision Driver Fix** (control panel toggle): in-process hooks that
-  suppress the legacy 3D Vision driver's OSD warnings, "press Ctrl+T"
-  prompts, and the rating/info overlay. Turn off if you suspect the
+  suppress the legacy 3D Vision driver's OSD warnings, depth adjustment, 
+  and the rating/info overlay. Turn off if you suspect the
   hooks are interacting badly with another tool.
 - **Click-through FSE popup**: the 3D output window is `WS_EX_LAYERED |
   WS_EX_TRANSPARENT` — mouse clicks pass through to whatever is
@@ -78,6 +81,14 @@ button quits the app (and tears down the FSE popup cleanly).
 - **Monitor capture caveat**: if you pick the *same* monitor as both
   source and output, the app refuses to start (would feed back into
   itself). Use Window capture instead, or pick a different display.
+- **Geo-11 setup** (for the `Katanga` source mode): configure your Geo-11
+  install to publish over the shared-memory channel NV3D-Glass listens on
+  by setting the following in `d3dxdm.ini`:
+
+  ```ini
+  direct_mode = katanga_vr
+  upscaling = 0
+  ```
 
 ## Building from source
 
@@ -99,18 +110,6 @@ second step alone is normally enough. Output is at
 build task (Release-MT|x64). **F5** launches the built .exe under the
 Visual Studio debugger.
 
-## Project structure
-
-```
-NV3D-Glass/
-  src/                  ImGui control panel + WGC/DXGI/Katanga capture front-end
-  external/
-    NV3D-Lib/           Git submodule: D3D9Ex + NvAPI 3D Vision presenter
-    imgui/              Git submodule: Dear ImGui (control panel UI)
-  .github/workflows/    CI: builds Release-MT|x64, publishes a "latest" pre-release
-  .vscode/              Build + debug tasks
-```
-
 ## License
 
 LGPL-2.1-or-later. See SPDX headers on individual source files and the
@@ -123,6 +122,10 @@ LGPL-2.1-or-later. See SPDX headers on individual source files and the
   D3D9Ex + click-through + focus-management patterns
 - [SR-Loom](https://github.com/effcol/SR-Loom) — reference structure for
   the standalone-app shell + WGC perf patterns
-- [Katanga](https://github.com/bo3b/Katanga) / [Geo-11](https://github.com/bo3b/3Dmigoto-DarkStarSword-Branch) —
-  upstream of the shared-memory producer protocol we read in Katanga mode
+- [Katanga](https://github.com/bo3b/Katanga) — defines the shared-memory
+  producer/consumer protocol our `Katanga` source mode implements
+- [Geo-11](https://helixmod.blogspot.com/2022/06/announcing-new-geo-11-3d-driver.html) —
+  modern producer for the Katanga protocol; we consume what it publishes
+- [VRScreenCap](https://github.com/artumino/VRScreenCap) — prior art for the
+  Katanga shared-memory consumer pattern
 - [Dear ImGui](https://github.com/ocornut/imgui) — control panel UI
