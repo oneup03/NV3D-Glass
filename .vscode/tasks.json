@@ -3,6 +3,58 @@
     "tasks": [
         {
             "label": "build (Release-MT|x64)",
+            "type": "shell",
+            "command": "msbuild",
+            "args": [
+                "NV3D-Glass.sln",
+                "/p:Configuration=Release-MT",
+                "/p:Platform=x64",
+                "/m",
+                "/nologo",
+                "/v:m"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared",
+                "clear": true
+            },
+            "problemMatcher": "$msCompile",
+            "detail": "Builds NV3D-Glass. The vcxproj's PreBuildEvent first builds NV3DLib (lib only, samples skipped via -Target NV3DLib)."
+        },
+        {
+            "label": "build NV3DLib only (Release-MT|x64)",
+            "type": "process",
+            "command": "powershell.exe",
+            "args": [
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                "${workspaceFolder}\\external\\NV3D-Lib\\tools\\build.ps1",
+                "-Configuration",
+                "Release-MT",
+                "-Platform",
+                "x64",
+                "-Target",
+                "NV3DLib"
+            ],
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared",
+                "clear": true
+            },
+            "problemMatcher": "$msCompile",
+            "detail": "Builds only the NV3DLib submodule (skips samples). Use when iterating on submodule code without rebuilding the app."
+        },
+        {
+            "label": "build NV3DLib + samples (Release-MT|x64)",
             "type": "process",
             "command": "powershell.exe",
             "args": [
@@ -16,40 +68,13 @@
                 "-Platform",
                 "x64"
             ],
-            "group": {
-                "kind": "build",
-                "isDefault": true
-            },
             "presentation": {
                 "reveal": "always",
                 "panel": "shared",
                 "clear": true
             },
             "problemMatcher": "$msCompile",
-            "dependsOrder": "sequence",
-            "dependsOn": []
-        },
-        {
-            "label": "build NV3D-Glass.sln (Release-MT|x64)",
-            "type": "shell",
-            "command": "msbuild",
-            "args": [
-                "NV3D-Glass.sln",
-                "/p:Configuration=Release-MT",
-                "/p:Platform=x64",
-                "/nologo",
-                "/v:m"
-            ],
-            "options": {
-                "cwd": "${workspaceFolder}"
-            },
-            "presentation": {
-                "reveal": "always",
-                "panel": "shared",
-                "clear": true
-            },
-            "problemMatcher": "$msCompile",
-            "detail": "Direct MSBuild of the app solution. The vcxproj's PreBuildEvent rebuilds NV3DLib as needed, so this is normally enough on its own."
+            "detail": "Builds NV3DLib AND the DX11/DX12/OGL/Vulkan sample apps. Use when working on or verifying the samples."
         },
         {
             "label": "rebuild (Release-MT|x64)",
@@ -60,6 +85,7 @@
                 "/p:Configuration=Release-MT",
                 "/p:Platform=x64",
                 "/t:Rebuild",
+                "/m",
                 "/nologo",
                 "/v:m"
             ],

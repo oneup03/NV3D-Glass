@@ -54,8 +54,11 @@
       <AdditionalLibraryDirectories>$(ProjectDir)external\NV3D-Lib\NV3DLib\lib\x$(PlatformArchitecture)\$(Configuration)\;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
     </Link>
     <PreBuildEvent>
-      <Command>powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$(ProjectDir)external\NV3D-Lib\tools\build.ps1" -Configuration $(Configuration) -Platform $(PlatformShortName)</Command>
-      <Message>Building NV3DLib submodule ($(Configuration)|$(PlatformShortName))</Message>
+      <!-- -Target NV3DLib skips the NV3DLib samples (DX11/DX12/OGL/Vulkan).
+           We only consume the .lib, never the sample .exe's, so building
+           them just lengthens our build by ~30s with no payoff. -->
+      <Command>powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$(ProjectDir)external\NV3D-Lib\tools\build.ps1" -Configuration $(Configuration) -Platform $(PlatformShortName) -Target NV3DLib</Command>
+      <Message>Building NV3DLib submodule ($(Configuration)|$(PlatformShortName), lib only)</Message>
     </PreBuildEvent>
   </ItemDefinitionGroup>
   <!-- Per-runtime NV3DLib variant + CRT selection -->
