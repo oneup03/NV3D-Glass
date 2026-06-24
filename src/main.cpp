@@ -25,6 +25,7 @@
 //     selected 3D Vision display, runs focus-suppression + minimize-suppression.
 
 #include "App.h"
+#include "Logging.h"
 
 #include <Windows.h>
 
@@ -41,6 +42,19 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int) {
     const int rc = app.Run();
     app.Shutdown();
 
+    // Log file stays open here on purpose — App::Shutdown used to call
+    // ShutdownFileLog() at the very end, which meant nothing past that point
+    // could be logged. We deferred the close to here so the WinRT teardown
+    // and ~App double-Shutdown are observable. The remaining freeze surface
+    // (post "control panel destroyed") is one of these steps; the next log
+    // line that DOESN'T appear is the one that blocked.
+    nv3dg::Log(NV3D::LogLevel::Info, L"main: before winrt::uninit_apartment");
     winrt::uninit_apartment();
+    nv3dg::Log(NV3D::LogLevel::Info, L"main: after winrt::uninit_apartment");
+
+    nv3dg::ShutdownFileLog();
     return rc;
+    // ~App() runs after this on stack unwind. Its Shutdown() call is silent
+    // (log file closed) but should be a no-op given app.Shutdown() already
+    // ran above.
 }

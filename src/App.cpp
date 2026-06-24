@@ -95,6 +95,9 @@ bool App::Init(HINSTANCE hInstance) {
     ini_path_  = DefaultIniPath();
     LoadSettings(settings_, ini_path_.c_str());
     InitFileLog(DefaultLogPath().c_str());
+    Log(NV3D::LogLevel::Info,
+        L"App::Init  begin  panel x=%d y=%d w=%d h=%d",
+        settings_.panel_x, settings_.panel_y, settings_.panel_w, settings_.panel_h);
 
     if (!CreateControlPanelWindow()) return false;
     if (!renderer_.Init(hwnd_))      return false;
@@ -117,6 +120,7 @@ bool App::Init(HINSTANCE hInstance) {
 
     panel_visible_ = true;
     ShowWindow(hwnd_, SW_SHOW);
+    Log(NV3D::LogLevel::Info, L"App::Init  complete  hwnd=%p panel shown", (void*)hwnd_);
 
     // Don't autostart on launch — the saved source may be stale and the user
     // hasn't asked us to do anything yet. Wait for them to hit Start.
@@ -149,10 +153,13 @@ void App::Shutdown() {
     if (hwnd_)          { DestroyWindow(hwnd_);                 hwnd_          = nullptr; }
     if (wndclass_atom_) { UnregisterClassW(kWndClass, hinstance_); wndclass_atom_ = 0;     }
     Log(NV3D::LogLevel::Info, L"App::Shutdown  control panel destroyed");
-    ShutdownFileLog();
+    // ShutdownFileLog() moved to main.cpp after winrt::uninit_apartment so
+    // we can capture the WinRT teardown + ~App double-Shutdown in the log
+    // (a freeze in those steps was previously invisible).
 }
 
 int App::Run() {
+    Log(NV3D::LogLevel::Info, L"App::Run  entering message loop");
     running_ = true;
     auto next = std::chrono::steady_clock::now();
     fps_t0_   = next;
@@ -193,6 +200,13 @@ bool App::CreateControlPanelWindow() {
     int w = settings_.panel_w > 0 ? settings_.panel_w : 480;
     int h = settings_.panel_h > 0 ? settings_.panel_h : 600;
     if (x == CW_USEDEFAULT || y == CW_USEDEFAULT) { x = 120; y = 120; }
+    // Recover from a persisted off-screen sentinel (-32000, -32000, w=160,
+    // h=39) — that's what GetWindowRect returns for a minimized window.
+    // Pre-fix INI files may have it; without this clamp the panel opens
+    // invisibly off-screen.
+    if (x < -10000 || y < -10000 || w < 100 || h < 100) {
+        x = 120; y = 120; w = 480; h = 600;
+    }
 
     hwnd_ = CreateWindowExW(
         0, kWndClass, L"NV3D-Glass",
@@ -208,13 +222,25 @@ void App::ApplyPanelGeometryFromSettings() {
     int w = settings_.panel_w > 0 ? settings_.panel_w : 480;
     int h = settings_.panel_h > 0 ? settings_.panel_h : 600;
     if (x == CW_USEDEFAULT || y == CW_USEDEFAULT) { x = 120; y = 120; }
+    // Same off-screen-sentinel recovery as CreateControlPanelWindow.
+    if (x < -10000 || y < -10000 || w < 100 || h < 100) {
+        x = 120; y = 120; w = 480; h = 600;
+    }
     SetWindowPos(hwnd_, nullptr, x, y, w, h, SWP_NOZORDER | SWP_NOACTIVATE);
 }
 
 void App::PersistPanelGeometry() {
     if (!hwnd_) return;
-    RECT rc{};
-    if (GetWindowRect(hwnd_, &rc)) {
+    // GetWindowPlacement returns the RESTORED (non-minimized, non-maximized)
+    // rect via rcNormalPosition. We were previously using GetWindowRect which
+    // on a minimized window returns the off-screen sentinel
+    // (-32000, -32000, -31840, -31961). Saving that to the INI made every
+    // subsequent launch open the panel invisibly off-screen — symptom was
+    // "control panel never pops up, only title bar in taskbar preview."
+    WINDOWPLACEMENT wp{};
+    wp.length = sizeof(wp);
+    if (GetWindowPlacement(hwnd_, &wp)) {
+        const RECT& rc = wp.rcNormalPosition;
         settings_.panel_x = rc.left;
         settings_.panel_y = rc.top;
         settings_.panel_w = rc.right  - rc.left;
