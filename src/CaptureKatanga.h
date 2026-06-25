@@ -63,6 +63,14 @@ public:
     // IsLost — that's a fatal device-removed condition.
     void ResetForReconnect();
 
+    // Drop our reference to the producer's shared D3D11 texture (drain GPU
+    // first, then release). Used before hiding the FSE popup: the 3DV
+    // driver's tear-down-stereo path TDRs when we hold a cross-process
+    // shared D3D11 import across an FSE D3D9 SW_MINIMIZE. With the hold
+    // released first, there's nothing cross-process for the teardown to
+    // fault on. The next TryAcquire will re-import from the mapping slot.
+    void ReleaseSharedHold();
+
     // Dimensions of the shared texture at first open — used by App::Start to
     // size the local staging texture so CopyResource hits the fast path.
     UINT InitialWidth()  const;

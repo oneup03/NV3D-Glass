@@ -105,6 +105,55 @@ bool Renderer::Init(HWND control_panel_hwnd) {
     return true;
 }
 
+bool Renderer::RecreateDevice() {
+    if (!hwnd_) return false;
+    Log(NV3D::LogLevel::Warning, L"Renderer::RecreateDevice  begin");
+
+    // Drop the ImGui DX11 backend (it caches device-bound resources). The
+    // Win32 backend and ImGui::CreateContext are device-agnostic; leave them.
+    if (imgui_init_) {
+        ImGui_ImplDX11_Shutdown();
+    }
+
+    // Release every D3D11 resource we own. Scaler shaders + sampler/blend/
+    // rasterizer state too — they're device-bound; the next scaler call will
+    // rebuild them via InitScaler.
+    ReleaseStaging();
+    rtv_.Reset();
+    scale_vs_.Reset();
+    scale_ps_.Reset();
+    scale_sampler_.Reset();
+    scale_rs_.Reset();
+    scale_blend_.Reset();
+    scaler_ready_ = false;
+    swap_.Reset();
+    ctx_.Reset();
+    d3d_.Reset();
+
+    if (!CreateD3D()) {
+        Log(NV3D::LogLevel::Error, L"Renderer::RecreateDevice  CreateD3D failed");
+        imgui_init_ = false;   // ImGui DX11 backend is gone and we couldn't rebuild it
+        return false;
+    }
+    if (!CreateSwapChain(hwnd_)) {
+        Log(NV3D::LogLevel::Error, L"Renderer::RecreateDevice  CreateSwapChain failed");
+        imgui_init_ = false;
+        return false;
+    }
+    if (!CreateBackBufferRTV()) {
+        Log(NV3D::LogLevel::Error, L"Renderer::RecreateDevice  CreateBackBufferRTV failed");
+        imgui_init_ = false;
+        return false;
+    }
+    if (imgui_init_ && !ImGui_ImplDX11_Init(d3d_.Get(), ctx_.Get())) {
+        Log(NV3D::LogLevel::Error, L"Renderer::RecreateDevice  ImGui_ImplDX11_Init failed");
+        imgui_init_ = false;
+        return false;
+    }
+    Log(NV3D::LogLevel::Info, L"Renderer::RecreateDevice  complete");
+    return true;
+}
+
 void Renderer::Shutdown() {
     // Step-by-step logs so a freeze in any one release pinpoints itself.
     // Same rationale as App::Shutdown's checkpoints — the freeze on quit
@@ -321,18 +370,28 @@ bool Renderer::InitScaler() {
 bool Renderer::ScaleCaptureToStaging(ID3D11Texture2D* src) {
     if (!InitScaler() || !staging_rtv_) return false;
 
-    // Build a transient SRV onto the captured texture. Capture textures from
-    // WGC arrive as B8G8R8A8_UNORM; we use the texture's native format so
-    // sRGB and typed-cast cases just work.
+    // Build an SRV onto the captured texture. Cache by source-pointer
+    // identity: Katanga's shared texture stays at the same ID3D11Texture2D*
+    // for many frames (it's reimported only on producer-side handle
+    // rotation), so re-creating an SRV every Tick was burning ~125 create
+    // /release cycles per second against cross-process shared GPU memory.
+    // On a steady-state Katanga stream this collapses to a single SRV.
     D3D11_TEXTURE2D_DESC td{};
     src->GetDesc(&td);
-    ComPtr<ID3D11ShaderResourceView> srv;
-    D3D11_SHADER_RESOURCE_VIEW_DESC sv{};
-    sv.Format                    = td.Format;
-    sv.ViewDimension             = D3D11_SRV_DIMENSION_TEXTURE2D;
-    sv.Texture2D.MostDetailedMip = 0;
-    sv.Texture2D.MipLevels       = 1;
-    if (FAILED(d3d_->CreateShaderResourceView(src, &sv, &srv))) return false;
+    if (!scale_cached_srv_ ||
+        scale_cached_src_ != src ||
+        scale_cached_fmt_ != td.Format) {
+        scale_cached_srv_.Reset();
+        D3D11_SHADER_RESOURCE_VIEW_DESC sv{};
+        sv.Format                    = td.Format;
+        sv.ViewDimension             = D3D11_SRV_DIMENSION_TEXTURE2D;
+        sv.Texture2D.MostDetailedMip = 0;
+        sv.Texture2D.MipLevels       = 1;
+        if (FAILED(d3d_->CreateShaderResourceView(src, &sv, &scale_cached_srv_))) return false;
+        scale_cached_src_ = src;
+        scale_cached_fmt_ = td.Format;
+    }
+    ID3D11ShaderResourceView* srv_ptr = scale_cached_srv_.Get();
 
     D3D11_VIEWPORT vp{};
     vp.Width    = static_cast<float>(staging_w_);
@@ -350,7 +409,7 @@ bool Renderer::ScaleCaptureToStaging(ID3D11Texture2D* src) {
     ctx_->IASetInputLayout(nullptr);
     ctx_->VSSetShader(scale_vs_.Get(), nullptr, 0);
     ctx_->PSSetShader(scale_ps_.Get(), nullptr, 0);
-    ID3D11ShaderResourceView* srvs[]   = { srv.Get() };
+    ID3D11ShaderResourceView* srvs[]   = { srv_ptr };
     ID3D11SamplerState*       samps[]  = { scale_sampler_.Get() };
     ctx_->PSSetShaderResources(0, 1, srvs);
     ctx_->PSSetSamplers(0, 1, samps);
@@ -421,6 +480,11 @@ void Renderer::ReleaseStaging() {
     staging_.Reset();
     staging_w_ = 0;
     staging_h_ = 0;
+    // Drop the cached scaler SRV — the source pointer was tied to the prior
+    // capture session; next session's first scaler call will recreate it.
+    scale_cached_srv_.Reset();
+    scale_cached_src_ = nullptr;
+    scale_cached_fmt_ = DXGI_FORMAT_UNKNOWN;
 }
 
 }  // namespace nv3dg

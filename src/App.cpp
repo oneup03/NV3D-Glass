@@ -509,7 +509,11 @@ void App::Restart() {
 
 void App::ToggleEyeSwap() {
     settings_.eye_swap = !settings_.eye_swap;
-    if (state_ == AppState::Running) Restart();
+    // Live update via NV3DLib's signature-row rewrite — no teardown needed.
+    // The legacy DIRECT-mode path required a Restart to swap left/right
+    // StretchRect sources; AUTOMATIC mode just flips a bit in the next
+    // signature row and the driver re-routes on the next PresentEx.
+    if (state_ == AppState::Running) presenter_.SetEyeSwap(settings_.eye_swap);
 }
 
 void App::TogglePanelVisible() {
@@ -549,6 +553,19 @@ void App::ToggleFseVisible() {
     // the desktop.
     if (state_ != AppState::Running) return;
     fse_visible_ = !fse_visible_;
+    if (!fse_visible_ && settings_.source_kind == SourceKind::Katanga) {
+        // Katanga-specific: drop our hold on the producer's shared D3D11
+        // texture BEFORE asking NV3DLib to minimize the FSE D3D9 popup.
+        // The 3DV driver's tear-down-stereo path that runs on SW_MINIMIZE
+        // has been observed to TDR the GPU when we hold a cross-process
+        // shared D3D11 import across the transition (kills both our
+        // process AND the producer's). With the hold released first there
+        // is nothing cross-process for the teardown to fault on; the next
+        // TryAcquire after the popup is shown again will re-import.
+        if (auto* kat = dynamic_cast<CaptureKatanga*>(cap_.get())) {
+            kat->ReleaseSharedHold();
+        }
+    }
     presenter_.SetVisible(fse_visible_);
     if (fse_visible_) {
         StartForceFocusWatcher(tracked_pid_);
@@ -753,6 +770,18 @@ void App::Tick() {
                 Stop();
                 state_ = AppState::SourceLost;
                 status_extra_ = L"source closed";
+                // If the device was lost to a GPU TDR (the most common
+                // cause of CaptureKatanga IsLost) the ImGui DX11 backend is
+                // also pointing at a dead device — the control panel paints
+                // white until we rebuild it. Recover in place so the user
+                // doesn't have to relaunch.
+                if (renderer_.Device() &&
+                    renderer_.Device()->GetDeviceRemovedReason() != S_OK) {
+                    if (renderer_.RecreateDevice()) {
+                        state_ = AppState::Idle;
+                        status_extra_ = L"GPU TDR recovered — click Start to retry";
+                    }
+                }
             } else if (cap_->IsDisconnected()) {
                 // Katanga: producer went quiet past the grace window. Don't
                 // tear the session down — fold the UI back to "waiting" and
@@ -805,9 +834,28 @@ void App::Tick() {
         const bool want_present  = (staging_dirty || heartbeat_due) && fse_visible_;
 
         if (want_present && renderer_.Staging()) {
-            presenter_.SubmitFrame(renderer_.Staging());
-            fps_frames_++;
-            last_present_ts_ = now;
+            // Catch D3D11 device-removed before handing the frame to NV3DLib
+            // — fence Signal / scaler Draw / CopyResource will all fail
+            // immediately on a dead device, and feeding NV3DLib a dead
+            // device cascades into D3D9 device-hung / PresentEx-failed log
+            // spam and a white control panel before we manage to Stop.
+            HRESULT rmv = renderer_.Device() ? renderer_.Device()->GetDeviceRemovedReason() : S_OK;
+            if (rmv != S_OK) {
+                Log(NV3D::LogLevel::Warning,
+                    L"App::Tick  D3D11 device removed (hr=0x%08X) — stopping + rebuilding device",
+                    (unsigned)rmv);
+                Stop();
+                state_ = AppState::SourceLost;
+                status_extra_ = L"D3D11 device removed";
+                if (renderer_.RecreateDevice()) {
+                    state_ = AppState::Idle;
+                    status_extra_ = L"GPU TDR recovered — click Start to retry";
+                }
+            } else {
+                presenter_.SubmitFrame(renderer_.Staging());
+                fps_frames_++;
+                last_present_ts_ = now;
+            }
         }
     }
 

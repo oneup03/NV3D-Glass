@@ -246,11 +246,16 @@ void Gui::DrawOutputSection(App& app) {
         ImGui::EndCombo();
     }
 
+    // Eye-swap is a runtime-cheap toggle in AUTOMATIC mode (rewrites the
+    // NV3D signature row on the next frame) so it doesn't need to Restart
+    // the display. The other two below DO require teardown.
+    if (ImGui::Checkbox("Swap eyes", &s.eye_swap)) {
+        if (app.state() == AppState::Running) app.presenter().SetEyeSwap(s.eye_swap);
+    }
     bool dirty = false;
-    dirty |= ImGui::Checkbox("Swap eyes",            &s.eye_swap);
     dirty |= ImGui::Checkbox("LightBoost timings",   &s.enable_lightboost);
     dirty |= ImGui::Checkbox("3DVision Driver Fix",  &s.enable_suppressor);
-    ImGui::TextDisabled("(toggling any of the above reconnects the display)");
+    ImGui::TextDisabled("(toggling LightBoost / Driver Fix reconnects the display)");
 
     if (dirty && app.state() == AppState::Running) app.Restart();
 

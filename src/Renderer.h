@@ -37,6 +37,16 @@ public:
     bool Init(HWND control_panel_hwnd);
     void Shutdown();
 
+    // Tear down all D3D11 state (device, context, swap chain, scaler shaders,
+    // ImGui DX11 backend) and rebuild it from scratch. Called when we detect
+    // DXGI_ERROR_DEVICE_REMOVED — the existing device is dead, the swap
+    // chain backbuffer renders nothing (the control panel goes white), and
+    // ImGui's cached resources point at a removed device. After RecreateDevice
+    // the panel paints again and the next Start() builds a fresh capture
+    // pipeline on the new device. Returns false on rebuild failure (rare —
+    // would indicate the GPU is permanently gone).
+    bool RecreateDevice();
+
     void HandleResize(UINT w, UINT h);
     void BeginImGuiFrame();              // ImGui_ImplDX11_NewFrame + ImGui_ImplWin32_NewFrame + ImGui::NewFrame
     void EndImGuiFrame();                // ImGui::Render + ImGui_ImplDX11_RenderDrawData + Present(1,0)
@@ -100,6 +110,14 @@ private:
     Microsoft::WRL::ComPtr<ID3D11RasterizerState>   scale_rs_;
     Microsoft::WRL::ComPtr<ID3D11BlendState>        scale_blend_;
     bool                                            scaler_ready_ = false;
+    // Cached SRV onto the last scaler source — Katanga's cross-process
+    // shared texture stays at the same pointer for many frames, so
+    // re-creating an SRV every call burns 100+ create/release cycles per
+    // second against shared GPU memory. Cache by source pointer identity;
+    // recreate only when the source changes.
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> scale_cached_srv_;
+    ID3D11Texture2D*                                scale_cached_src_ = nullptr;
+    DXGI_FORMAT                                     scale_cached_fmt_ = DXGI_FORMAT_UNKNOWN;
 };
 
 }

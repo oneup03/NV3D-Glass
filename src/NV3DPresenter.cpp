@@ -132,6 +132,10 @@ void NV3DPresenter::SetVisible(bool visible) {
     if (iface_) iface_->SetVisible(visible);
 }
 
+void NV3DPresenter::SetEyeSwap(bool enable) {
+    if (iface_) iface_->SetEyeSwap(enable);
+}
+
 bool NV3DPresenter::RecreateWith(ID3D11Device* dev, const Settings& s, DWORD tracked_game_pid) {
     Shutdown();
     return Init(dev, s, tracked_game_pid);

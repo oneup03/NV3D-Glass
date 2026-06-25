@@ -56,6 +56,12 @@ struct CaptureKatanga::Impl {
     // being initialized. Don't tip into "disconnected" on a single bad poll;
     // only do so if the bad state persists past kBadStateGrace.
     std::chrono::steady_clock::time_point bad_state_since{};
+    // Earliest moment a TryAcquire is allowed to expose a texture for read.
+    // Set by ResetForReconnect to give the producer time to fully initialize
+    // a freshly-allocated shared texture after a resolution change; reading
+    // a not-yet-ready cross-process shared texture has historically caused
+    // GPU TDRs that take down both this process AND the producer's process.
+    std::chrono::steady_clock::time_point read_ready_at{};
 };
 
 namespace {
@@ -264,12 +270,19 @@ bool CaptureKatanga::TryAcquire(ID3D11Texture2D** out, UINT* w, UINT* h, DXGI_FO
         //    memory is still mapped. Skip the drain on the first import
         //    (no prior shared_tex to protect).
         // 2. Reset and import the new handle.
-        // 3. For rotations (not first import) skip emitting a frame this
-        //    tick — Geo-11 (and likely others) publish the new handle
-        //    *before* finishing init on the new texture, so reading from it
-        //    immediately wedges the GPU (manifests as NV3DLib's sync_query
-        //    timing out 500ms later). Letting one tick (~8ms) elapse before
-        //    we touch the new texture lets the producer finish init.
+        // 3. Handle the rotation outcome:
+        //    a) Resolution CHANGED — producer rebuilt at new dims. Reading
+        //       its freshly-allocated texture too early has TDR'd the GPU
+        //       in testing (kills BOTH our process AND the producer's,
+        //       because TDR is device-wide). Drop straight into the
+        //       "disconnected" state: App will fold the FSE back to waiting,
+        //       call ResetForReconnect which arms a multi-second grace
+        //       timer, and only then start polling the slot again.
+        //    b) Same dims — likely the producer's standard init-then-stable
+        //       rotation pattern (Geo-11 does this within ms of first
+        //       connect). Skip one tick to let init finish and continue.
+        const uint32_t prev_w = impl_->width;
+        const uint32_t prev_h = impl_->height;
         const bool is_rotation = (impl_->shared_tex != nullptr);
         if (is_rotation) {
             DrainGpu(impl_->device.Get());
@@ -293,13 +306,32 @@ bool CaptureKatanga::TryAcquire(ID3D11Texture2D** out, UINT* w, UINT* h, DXGI_FO
         }
         ClearBadState(*impl_);
         if (is_rotation) {
+            const bool dim_changed = (impl_->width != prev_w || impl_->height != prev_h);
+            if (dim_changed) {
+                Log(NV3D::LogLevel::Info,
+                    L"CaptureKatanga: resolution change %ux%u → %ux%u — disconnecting "
+                    L"so producer can settle before we attempt a read (skips a TDR risk)",
+                    prev_w, prev_h, impl_->width, impl_->height);
+                // Drop the just-imported texture too; we don't want anyone
+                // to read it before the post-reset grace period runs.
+                impl_->shared_tex.Reset();
+                impl_->disconnected.store(true);
+                return false;
+            }
             Log(NV3D::LogLevel::Info,
-                L"CaptureKatanga: rotation absorbed — skipping one tick to let producer init");
+                L"CaptureKatanga: rotation absorbed (same dims) — skipping one tick to let producer init");
             return false;
         }
     }
 
     if (!impl_->shared_tex) return false;
+    // After a ResetForReconnect, hold off reads until the producer has had
+    // time to fully initialize its newly-allocated shared texture.
+    if (impl_->read_ready_at != std::chrono::steady_clock::time_point{} &&
+        std::chrono::steady_clock::now() < impl_->read_ready_at) {
+        return false;
+    }
+    impl_->read_ready_at = {};
     ClearBadState(*impl_);   // we have a current good import
 
     *out = impl_->shared_tex.Get();
@@ -318,6 +350,20 @@ bool CaptureKatanga::IsDisconnected() const {
     return impl_ && impl_->disconnected.load();
 }
 
+void CaptureKatanga::ReleaseSharedHold() {
+    if (!impl_) return;
+    if (!impl_->shared_tex) return;
+    // Drain GPU work that references the shared_tex BEFORE we release our
+    // ref — same reasoning as the rotation drain. Then drop both the ref
+    // and the cached handle value so the next TryAcquire treats the slot
+    // as a fresh import.
+    DrainGpu(impl_->device.Get());
+    impl_->shared_tex.Reset();
+    impl_->current_handle = 0;
+    Log(NV3D::LogLevel::Info,
+        L"CaptureKatanga: shared hold released (FSE minimize); next TryAcquire will re-import");
+}
+
 void CaptureKatanga::ResetForReconnect() {
     if (!impl_) return;
     // Recoverable transition: clear the soft-disconnect state and the cached
@@ -328,7 +374,14 @@ void CaptureKatanga::ResetForReconnect() {
     impl_->current_handle = 0;
     impl_->bad_state_since = {};
     impl_->disconnected.store(false);
-    Log(NV3D::LogLevel::Info, L"CaptureKatanga: reset for reconnect");
+    // Arm the post-reconnect read-grace timer. After this the next
+    // TryAcquire will import any handle it sees but won't return the texture
+    // for reading until 1.5s have passed — long enough for a producer that
+    // just rebuilt a shared texture (resolution change, mode toggle) to be
+    // fully ready. Reads earlier than this caused GPU TDRs in testing.
+    impl_->read_ready_at = std::chrono::steady_clock::now() + std::chrono::milliseconds(1500);
+    Log(NV3D::LogLevel::Info,
+        L"CaptureKatanga: reset for reconnect — read-grace 1500ms armed");
 }
 
 void CaptureKatanga::Stop() {

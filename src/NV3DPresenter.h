@@ -57,6 +57,13 @@ public:
     // state is a no-op.
     void SetVisible(bool visible);
 
+    // Live eye-swap toggle. Updates the NV3D signature row on the next frame
+    // — driver picks up the new routing on the following PresentEx with no
+    // teardown / re-Init / visible glitch. Safe to call mid-session at any
+    // time. AUTOMATIC-mode (NV3D signature) path only — the legacy DIRECT
+    // path that used SetActiveEye is no longer in the build.
+    void SetEyeSwap(bool enable);
+
     // Tear down and rebuild against new Settings. Used when init-only params
     // change (eye_swap, target_monitor, on_top, lightboost, suppressor).
     bool RecreateWith(ID3D11Device* dev, const Settings& s, DWORD tracked_game_pid);
