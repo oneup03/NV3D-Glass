@@ -148,6 +148,22 @@ bool ImportHandle(CaptureKatanga::Impl& impl, uintptr_t handle_value) {
         L"CaptureKatanga: imported %ux%u fmt=%u handle=%p",
         desc.Width, desc.Height, (unsigned)desc.Format,
         reinterpret_cast<void*>(handle_value));
+    // Diagnostic dump of the producer's full texture descriptor. When the
+    // GPU TDRs while sampling this texture through the scaler shader, the
+    // most useful clue is whether the producer's resource came in with the
+    // bind/misc flags the shader-resource code path requires (notably
+    // BIND_SHADER_RESOURCE — without it CreateShaderResourceView would
+    // refuse but Draw against an SRV onto an underbound resource may still
+    // wedge the driver). Logging every import is cheap (one line per
+    // rotation) and is the fastest way to spot a Geo-11 resource we've
+    // never seen before.
+    Log(NV3D::LogLevel::Info,
+        L"CaptureKatanga: source desc Usage=%u BindFlags=0x%X MiscFlags=0x%X "
+        L"ArraySize=%u MipLevels=%u SampleDesc=%ux%u CPUAccess=0x%X",
+        (unsigned)desc.Usage, (unsigned)desc.BindFlags, (unsigned)desc.MiscFlags,
+        desc.ArraySize, desc.MipLevels,
+        desc.SampleDesc.Count, desc.SampleDesc.Quality,
+        (unsigned)desc.CPUAccessFlags);
     return true;
 }
 

@@ -166,6 +166,12 @@ private:
     // detect a new producer.
     void EnterKatangaWaitingMode();
 
+    // Diagnostic frame counter — every N ticks we log the live D3D11 device
+    // state, gated on NV3D_GLASS_D3D11_DEBUG=1. Used to catch a
+    // partially-removed device before the explicit TDR-detection paths
+    // (CaptureKatanga IsLost, pre-SubmitFrame check) fire.
+    int                                diag_periodic_counter_ = 0;
+
     // Telemetry / status
     UINT                               last_src_w_ = 0;
     UINT                               last_src_h_ = 0;

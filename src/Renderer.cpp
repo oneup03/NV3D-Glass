@@ -42,11 +42,43 @@ Renderer::~Renderer() { Shutdown(); }
 bool Renderer::CreateD3D() {
     const D3D_FEATURE_LEVEL fls[] = { D3D_FEATURE_LEVEL_11_1, D3D_FEATURE_LEVEL_11_0 };
     D3D_FEATURE_LEVEL fl{};
+    UINT create_flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
+    // D3D11 debug layer: ON by default. Set NV3D_GLASS_D3D11_DEBUG=0 to
+    // disable. When enabled, every D3D11 driver validation warning / error
+    // is routed to OutputDebugString — view with sysinternals DebugView.
+    // Most useful right before a GPU TDR, where the layer usually prints
+    // the underlying API misuse that the driver is about to fault on.
+    // Comes with a perf cost; if missing SDK Layers package, we fall back
+    // to a non-debug create automatically below.
+    {
+        wchar_t env_value[8]{};
+        DWORD env_len = GetEnvironmentVariableW(L"NV3D_GLASS_D3D11_DEBUG", env_value, _countof(env_value));
+        const bool explicitly_off = (env_len > 0 && env_len < _countof(env_value) && env_value[0] == L'0');
+        if (!explicitly_off) {
+            create_flags |= D3D11_CREATE_DEVICE_DEBUG;
+            Log(NV3D::LogLevel::Info,
+                L"Renderer::CreateD3D  D3D11_CREATE_DEVICE_DEBUG on (set NV3D_GLASS_D3D11_DEBUG=0 to disable)");
+        }
+    }
     HRESULT hr = D3D11CreateDevice(
         nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr,
-        D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+        create_flags,
         fls, _countof(fls), D3D11_SDK_VERSION,
         &d3d_, &fl, &ctx_);
+    // If the SDK layers DLL is missing the call fails with E_FAIL — fall
+    // back to a non-debug create so we don't accidentally brick the app on
+    // a machine without the SDK installed.
+    if (FAILED(hr) && (create_flags & D3D11_CREATE_DEVICE_DEBUG)) {
+        Log(NV3D::LogLevel::Warning,
+            L"Renderer::CreateD3D  D3D11_CREATE_DEVICE_DEBUG failed hr=0x%08X — "
+            L"SDK layers missing? Retrying without debug flag", (unsigned)hr);
+        create_flags &= ~D3D11_CREATE_DEVICE_DEBUG;
+        hr = D3D11CreateDevice(
+            nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr,
+            create_flags,
+            fls, _countof(fls), D3D11_SDK_VERSION,
+            &d3d_, &fl, &ctx_);
+    }
     return SUCCEEDED(hr) && d3d_ && ctx_;
 }
 

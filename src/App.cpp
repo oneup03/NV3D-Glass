@@ -857,6 +857,55 @@ void App::Tick() {
                 last_present_ts_ = now;
             }
         }
+
+        // Diagnostic periodic device-state ping. Gated on NV3D_GLASS_D3D11_DEBUG=1
+        // so normal users don't get spam. Helps spot a slow device degradation
+        // (partial removal, increasing per-frame latency) before the explicit
+        // TDR-detection paths fire — by then the device is already gone.
+        if (++diag_periodic_counter_ >= 30) {
+            diag_periodic_counter_ = 0;
+            static const bool diag_on = []() {
+                wchar_t v[8]{};
+                DWORD n = GetEnvironmentVariableW(L"NV3D_GLASS_D3D11_DEBUG", v, _countof(v));
+                // ON by default; only "0" disables.
+                return !(n > 0 && n < _countof(v) && v[0] == L'0');
+            }();
+            if (diag_on && renderer_.Device()) {
+                HRESULT rmv = renderer_.Device()->GetDeviceRemovedReason();
+                // Snapshot adapter LUID + monitor DEVMODE so a mode-set / GPU
+                // hot-swap / monitor re-enumeration that fires near a TDR
+                // shows up in the log. LUID change = the adapter Windows
+                // reports for us changed (very rare, would mean the GPU was
+                // physically swapped). DEVMODE refresh change = mode-set
+                // happened on the panel (the common trigger for adapter-wide
+                // device-removed events).
+                LUID adapter_luid{};
+                Microsoft::WRL::ComPtr<IDXGIDevice> dxgi_dev;
+                Microsoft::WRL::ComPtr<IDXGIAdapter> dxgi_adapter;
+                if (SUCCEEDED(renderer_.Device()->QueryInterface(IID_PPV_ARGS(&dxgi_dev))) &&
+                    SUCCEEDED(dxgi_dev->GetAdapter(&dxgi_adapter)) && dxgi_adapter) {
+                    DXGI_ADAPTER_DESC ad{};
+                    if (SUCCEEDED(dxgi_adapter->GetDesc(&ad))) {
+                        adapter_luid = ad.AdapterLuid;
+                    }
+                }
+                DEVMODEW dm{}; dm.dmSize = sizeof(dm);
+                EnumDisplaySettingsW(settings_.output_monitor_id.empty()
+                                         ? nullptr
+                                         : settings_.output_monitor_id.c_str(),
+                                     ENUM_CURRENT_SETTINGS, &dm);
+                Log(NV3D::LogLevel::Info,
+                    L"App::Tick  diag: D3D11 hr=0x%08X src=%ux%u staging=%ux%u fps=%.1f "
+                    L"cap=%p waiting=%d fse_visible=%d adapter_luid=%lx:%lx "
+                    L"devmode=%ux%u@%uHz",
+                    (unsigned)rmv, last_src_w_, last_src_h_,
+                    renderer_.StagingWidth(), renderer_.StagingHeight(),
+                    fps_, (void*)cap_.get(),
+                    (int)waiting_katanga_first_frame_, (int)fse_visible_,
+                    (unsigned long)adapter_luid.HighPart, (unsigned long)adapter_luid.LowPart,
+                    dm.dmPelsWidth, dm.dmPelsHeight, dm.dmDisplayFrequency);
+            }
+        }
     }
 
     // FPS rolling average (1 Hz update)
@@ -930,6 +979,27 @@ LRESULT App::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case WM_DESTROY:
             PostQuitMessage(0);
             return 0;
+        // ---- TDR-investigation probes ----
+        // We log these on every receipt (cheap — Windows only sends them on
+        // real display config changes) so a TDR-correlated re-enumeration
+        // shows up plainly in the log near the device-removed cascade.
+        case WM_DISPLAYCHANGE:
+            Log(NV3D::LogLevel::Info,
+                L"App::WndProc  WM_DISPLAYCHANGE bpp=%u w=%u h=%u",
+                (unsigned)wp, (unsigned)LOWORD(lp), (unsigned)HIWORD(lp));
+            break;
+        case WM_DEVICECHANGE:
+            Log(NV3D::LogLevel::Info,
+                L"App::WndProc  WM_DEVICECHANGE event=0x%X",
+                (unsigned)wp);
+            break;
+        case WM_SETTINGCHANGE: {
+            const wchar_t* s = reinterpret_cast<const wchar_t*>(lp);
+            Log(NV3D::LogLevel::Info,
+                L"App::WndProc  WM_SETTINGCHANGE flag=0x%X area=%s",
+                (unsigned)wp, s ? s : L"<null>");
+            break;
+        }
         default: break;
     }
     return DefWindowProcW(hwnd, msg, wp, lp);
