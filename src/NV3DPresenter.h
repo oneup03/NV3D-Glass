@@ -64,6 +64,13 @@ public:
     // path that used SetActiveEye is no longer in the build.
     void SetEyeSwap(bool enable);
 
+    // Tell NV3DLib the D3D11 device (and therefore the whole adapter) is
+    // lost, BEFORE Shutdown(). Without this the library's D3D9 side never
+    // observes the failure (a hidden popup means no D3D9 call runs) and its
+    // teardown takes the live path — Stereo_DestroyHandle + COM Release into
+    // a wedged kernel driver, both of which can block indefinitely.
+    void NotifyDeviceLost();
+
     // Tear down and rebuild against new Settings. Used when init-only params
     // change (eye_swap, target_monitor, on_top, lightboost, suppressor).
     bool RecreateWith(ID3D11Device* dev, const Settings& s, DWORD tracked_game_pid);

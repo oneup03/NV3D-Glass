@@ -136,6 +136,14 @@ void NV3DPresenter::SetEyeSwap(bool enable) {
     if (iface_) iface_->SetEyeSwap(enable);
 }
 
+void NV3DPresenter::NotifyDeviceLost() {
+    if (iface_) {
+        Log(NV3D::LogLevel::Warning,
+            L"NV3DPresenter: NotifyDeviceLost — next Shutdown takes the dead-device path");
+        iface_->NotifyDeviceLost();
+    }
+}
+
 bool NV3DPresenter::RecreateWith(ID3D11Device* dev, const Settings& s, DWORD tracked_game_pid) {
     Shutdown();
     return Init(dev, s, tracked_game_pid);

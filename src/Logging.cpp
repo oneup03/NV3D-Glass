@@ -39,15 +39,23 @@ void LogSink(NV3D::LogLevel level, const wchar_t* msg, void*) {
         case NV3D::LogLevel::Warning: lvl = L"W"; break;
         case NV3D::LogLevel::Error:   lvl = L"E"; break;
     }
+    // Wall-clock timestamp on every line. Crash/TDR forensics live and die
+    // on knowing whether a system event (WM_DEVICECHANGE storm, display
+    // reset) landed milliseconds or minutes after our own teardown steps.
+    SYSTEMTIME st{};
+    GetLocalTime(&st);
     {
         std::lock_guard<std::mutex> lk(g_mtx);
         if (g_log) {
-            fwprintf(g_log, L"[NV3D][%s] %s\n", lvl, msg);
+            fwprintf(g_log, L"[%02u:%02u:%02u.%03u][NV3D][%s] %s\n",
+                     st.wHour, st.wMinute, st.wSecond, st.wMilliseconds,
+                     lvl, msg);
             fflush(g_log);
         }
     }
     wchar_t buf[2048];
-    _snwprintf_s(buf, _TRUNCATE, L"[NV3D-Glass][%s] %s\n", lvl, msg);
+    _snwprintf_s(buf, _TRUNCATE, L"[%02u:%02u:%02u.%03u][NV3D-Glass][%s] %s\n",
+                 st.wHour, st.wMinute, st.wSecond, st.wMilliseconds, lvl, msg);
     OutputDebugStringW(buf);
 }
 

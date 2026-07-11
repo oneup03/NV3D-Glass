@@ -244,10 +244,8 @@ void Renderer::EndImGuiFrame() {
 
 bool Renderer::CreateFixedStaging(UINT w, UINT h) {
     if (!d3d_ || w == 0 || h == 0) return false;
-    if (staging_ && w == staging_w_ && h == staging_h_) return true;
-    staging_rtv_.Reset();
-    staging_.Reset();
-    staging_w_ = 0; staging_h_ = 0;
+    if (staging_[0] && w == staging_w_ && h == staging_h_) return true;
+    ReleaseStaging();
 
     D3D11_TEXTURE2D_DESC td{};
     td.Width            = w;
@@ -262,18 +260,26 @@ bool Renderer::CreateFixedStaging(UINT w, UINT h) {
     // MISC_SHARED is the NV3DLib fast path requirement.
     td.BindFlags        = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
     td.MiscFlags        = D3D11_RESOURCE_MISC_SHARED;
-    if (FAILED(d3d_->CreateTexture2D(&td, nullptr, &staging_))) return false;
-    if (FAILED(d3d_->CreateRenderTargetView(staging_.Get(), nullptr, &staging_rtv_))) {
-        staging_.Reset();
-        return false;
+    for (UINT i = 0; i < kStagingRing; ++i) {
+        if (FAILED(d3d_->CreateTexture2D(&td, nullptr, &staging_[i])) ||
+            FAILED(d3d_->CreateRenderTargetView(staging_[i].Get(), nullptr, &staging_rtv_[i]))) {
+            ReleaseStaging();
+            return false;
+        }
     }
-    staging_w_ = w;
-    staging_h_ = h;
+    staging_idx_ = 0;
+    staging_w_   = w;
+    staging_h_   = h;
+    Log(NV3D::LogLevel::Info,
+        L"Renderer: staging ring created — %u x %ux%u BGRA8 MISC_SHARED", kStagingRing, w, h);
     return true;
 }
 
 bool Renderer::CopyCaptureToStaging(ID3D11Texture2D* src) {
-    if (!ctx_ || !staging_ || !src) return false;
+    if (!ctx_ || !staging_[0] || !src) return false;
+    // New frame → next ring slot; the previous slot may still be mid-read
+    // by NV3DLib's D3D9 StretchRect (no implicit sync on KMT shares).
+    AdvanceStaging();
     D3D11_TEXTURE2D_DESC sd{};
     src->GetDesc(&sd);
     // Fast path requires BOTH matching dimensions AND a format compatible
@@ -289,17 +295,19 @@ bool Renderer::CopyCaptureToStaging(ID3D11Texture2D* src) {
         sd.Format == DXGI_FORMAT_B8G8R8A8_TYPELESS;
     if (sd.Width == staging_w_ && sd.Height == staging_h_ && format_ok) {
         // Dim+format-match fast path — no shader needed.
-        ctx_->CopyResource(staging_.Get(), src);
+        ctx_->CopyResource(staging_[staging_idx_].Get(), src);
         return true;
     }
     return ScaleCaptureToStaging(src);
 }
 
 bool Renderer::CopyCaptureRegionToStaging(ID3D11Texture2D* src, const RECT& src_box) {
-    if (!ctx_ || !staging_ || !src) return false;
+    if (!ctx_ || !staging_[0] || !src) return false;
     const LONG box_w = src_box.right  - src_box.left;
     const LONG box_h = src_box.bottom - src_box.top;
+    // Delegate BEFORE advancing — CopyCaptureToStaging advances itself.
     if (box_w <= 0 || box_h <= 0) return CopyCaptureToStaging(src);
+    AdvanceStaging();
 
     D3D11_TEXTURE2D_DESC sd{};
     src->GetDesc(&sd);
@@ -321,7 +329,7 @@ bool Renderer::CopyCaptureRegionToStaging(ID3D11Texture2D* src, const RECT& src_
         box.right  = static_cast<UINT>(src_box.right);
         box.bottom = static_cast<UINT>(src_box.bottom);
         box.back   = 1;
-        ctx_->CopySubresourceRegion(staging_.Get(), 0, 0, 0, 0, src, 0, &box);
+        ctx_->CopySubresourceRegion(staging_[staging_idx_].Get(), 0, 0, 0, 0, src, 0, &box);
         return true;
     }
 
@@ -400,7 +408,9 @@ bool Renderer::InitScaler() {
 }
 
 bool Renderer::ScaleCaptureToStaging(ID3D11Texture2D* src) {
-    if (!InitScaler() || !staging_rtv_) return false;
+    // NOTE: no AdvanceStaging() here — this is a fallback stage invoked by
+    // the public entry points, which have already advanced the ring.
+    if (!InitScaler() || !staging_rtv_[staging_idx_]) return false;
 
     // Build an SRV onto the captured texture. Cache by source-pointer
     // identity: Katanga's shared texture stays at the same ID3D11Texture2D*
@@ -431,7 +441,7 @@ bool Renderer::ScaleCaptureToStaging(ID3D11Texture2D* src) {
     vp.MinDepth = 0.0f;
     vp.MaxDepth = 1.0f;
 
-    ID3D11RenderTargetView* rtv = staging_rtv_.Get();
+    ID3D11RenderTargetView* rtv = staging_rtv_[staging_idx_].Get();
     ctx_->OMSetRenderTargets(1, &rtv, nullptr);
     ctx_->RSSetViewports(1, &vp);
     ctx_->RSSetState(scale_rs_.Get());
@@ -458,7 +468,8 @@ bool Renderer::ScaleCaptureToStaging(ID3D11Texture2D* src) {
 }
 
 void Renderer::FillTestPattern(uint32_t frame) {
-    if (!d3d_ || !ctx_ || !staging_) return;
+    if (!d3d_ || !ctx_ || !staging_[0]) return;
+    AdvanceStaging();
 
     // Build the pattern in CPU-side memory, then UpdateSubresource into the
     // MISC_SHARED staging. (Map() doesn't work on MISC_SHARED + USAGE_DEFAULT.)
@@ -504,16 +515,23 @@ void Renderer::FillTestPattern(uint32_t frame) {
         }
     }
 
-    ctx_->UpdateSubresource(staging_.Get(), 0, nullptr, px.data(), pitch, 0);
+    ctx_->UpdateSubresource(staging_[staging_idx_].Get(), 0, nullptr, px.data(), pitch, 0);
 }
 
 void Renderer::ReleaseStaging() {
-    staging_rtv_.Reset();
-    staging_.Reset();
+    for (UINT i = 0; i < kStagingRing; ++i) {
+        staging_rtv_[i].Reset();
+        staging_[i].Reset();
+    }
+    staging_idx_ = 0;
     staging_w_ = 0;
     staging_h_ = 0;
     // Drop the cached scaler SRV — the source pointer was tied to the prior
     // capture session; next session's first scaler call will recreate it.
+    InvalidateScalerCache();
+}
+
+void Renderer::InvalidateScalerCache() {
     scale_cached_srv_.Reset();
     scale_cached_src_ = nullptr;
     scale_cached_fmt_ = DXGI_FORMAT_UNKNOWN;

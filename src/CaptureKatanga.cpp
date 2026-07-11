@@ -62,6 +62,13 @@ struct CaptureKatanga::Impl {
     // a not-yet-ready cross-process shared texture has historically caused
     // GPU TDRs that take down both this process AND the producer's process.
     std::chrono::steady_clock::time_point read_ready_at{};
+    // Import-failure log throttle. A dead producer's stale handle stays in
+    // the slot (Geo-11 never clears it) and gets retried at tick rate —
+    // observed 21s of E_INVALIDARG at 125Hz. Log the first failure per
+    // handle, then once per second with a suppressed-count.
+    uintptr_t                       import_fail_handle = 0;
+    DWORD                           import_fail_tick   = 0;
+    unsigned                        import_fail_suppressed = 0;
 };
 
 namespace {
@@ -124,9 +131,20 @@ bool ImportHandle(CaptureKatanga::Impl& impl, uintptr_t handle_value) {
         reinterpret_cast<HANDLE>(handle_value),
         IID_PPV_ARGS(&res));
     if (FAILED(hr) || !res) {
-        Log(NV3D::LogLevel::Warning,
-            L"CaptureKatanga: OpenSharedResource failed hr=0x%08X handle=%p",
-            (unsigned)hr, reinterpret_cast<void*>(handle_value));
+        const DWORD now = GetTickCount();
+        if (handle_value != impl.import_fail_handle ||
+            now - impl.import_fail_tick >= 1000) {
+            Log(NV3D::LogLevel::Warning,
+                L"CaptureKatanga: OpenSharedResource failed hr=0x%08X handle=%p"
+                L" (%u repeats suppressed)",
+                (unsigned)hr, reinterpret_cast<void*>(handle_value),
+                impl.import_fail_suppressed);
+            impl.import_fail_handle     = handle_value;
+            impl.import_fail_tick       = now;
+            impl.import_fail_suppressed = 0;
+        } else {
+            ++impl.import_fail_suppressed;
+        }
         return false;
     }
     ComPtr<ID3D11Texture2D> tex;
@@ -249,7 +267,11 @@ bool CaptureKatanga::TryAcquire(ID3D11Texture2D** out, UINT* w, UINT* h, DXGI_FO
     // longer backed by valid GPU memory; the next Draw / CopyResource trips
     // a TDR). Detect that here and surface as Lost so the host stops
     // submitting frames instead of repainting our control panel white.
-    if (impl_->current_handle != 0) {
+    // Unconditional (not gated on current_handle): after ReleaseSharedHold
+    // the handle is 0, but the device can still have died in the meantime
+    // (TDR while the popup was hidden) — catch it before we try an
+    // OpenSharedResource on the dead device.
+    {
         HRESULT removed = impl_->device->GetDeviceRemovedReason();
         if (removed != S_OK) {
             Log(NV3D::LogLevel::Warning,

@@ -394,8 +394,12 @@ bool App::Start() {
             GetWindowThreadProcessId(fg, &tracked_pid);
         }
     }
-    // For "test pattern only" runs (no source), pass our own PID so NV3DLib's
-    // VRto3D loop keeps the popup pinned and exits cleanly when we exit.
+    // For "test pattern only" runs (no source) AND Katanga (game process
+    // unknown until the reveal; popup lifecycle is app-driven), pass our own
+    // PID so NV3DLib's VRto3D loop keeps the popup pinned and exits cleanly
+    // when we exit. Safe because the lib loop never focus-steals — it only
+    // auto-minimizes when the tracked process dies. Do NOT pass 0: that
+    // selects the legacy minimize-on-host-focus-loss mode.
     if (tracked_pid == 0) tracked_pid = GetCurrentProcessId();
 
     if (!presenter_.Init(renderer_.Device(), settings_, tracked_pid)) {
@@ -413,6 +417,8 @@ bool App::Start() {
     fps_frames_    = 0;
     fps_           = 0.0f;
     test_pattern_frame_ = 0;
+    last_capture_frame_ts_ = {};
+    producer_gap_logged_   = false;
     tray_.SetStartStopLabel(L"Stop");
     if (katanga_mode) {
         presenter_.SetVisible(false);
@@ -483,6 +489,16 @@ void App::Stop() {
         presenter_.IsActive() ? L"true" : L"false",
         (int)state_);
     StopForceFocusWatcher();
+    // Drop every reference to the producer's cross-process texture BEFORE
+    // the D3D9 teardown. cap_->Stop() alone releases CaptureKatanga's ref
+    // without draining the GPU, and the scaler's cached SRV would keep the
+    // producer's allocation open straight through the FSE restore/release
+    // modesets inside presenter_.Shutdown() — the same class of hold that
+    // TDRs a half-wedged driver on the minimize transition.
+    if (auto* kat = dynamic_cast<CaptureKatanga*>(cap_.get())) {
+        kat->ReleaseSharedHold();
+    }
+    renderer_.InvalidateScalerCache();
     if (cap_) { cap_->Stop(); cap_.reset(); }
     presenter_.Shutdown();
     renderer_.ReleaseStaging();
@@ -552,6 +568,10 @@ void App::ToggleFseVisible() {
     // so it stops yanking focus while the user is trying to interact with
     // the desktop.
     if (state_ != AppState::Running) return;
+    // While waiting for a producer the FSE session is fully released —
+    // there is nothing to show or hide, and flipping fse_visible_ here
+    // would only desync the reveal logic.
+    if (waiting_katanga_first_frame_) return;
     fse_visible_ = !fse_visible_;
     if (!fse_visible_ && settings_.source_kind == SourceKind::Katanga) {
         // Katanga-specific: drop our hold on the producer's shared D3D11
@@ -565,6 +585,18 @@ void App::ToggleFseVisible() {
         if (auto* kat = dynamic_cast<CaptureKatanga*>(cap_.get())) {
             kat->ReleaseSharedHold();
         }
+        // ReleaseSharedHold drops CaptureKatanga's reference, but the scaler
+        // pipeline caches an SRV on the SAME cross-process texture — without
+        // dropping that too, the producer's allocation stays open on our
+        // device straight through the SW_MINIMIZE stereo teardown, which is
+        // the exact hold the release above exists to eliminate. (Any queued
+        // scaler draw was already flushed by ReleaseSharedHold's DrainGpu.)
+        renderer_.InvalidateScalerCache();
+        // Capture is paused for the whole hidden period (see Tick), so also
+        // park the gap telemetry — a stale timestamp would otherwise log a
+        // bogus minutes-long "producer frame gap ended" at restore.
+        last_capture_frame_ts_ = {};
+        producer_gap_logged_   = false;
     }
     presenter_.SetVisible(fse_visible_);
     if (fse_visible_) {
@@ -640,17 +672,43 @@ void App::StopForceFocusWatcher() {
 }
 
 void App::EnterKatangaWaitingMode() {
-    // Reverse the first-frame reveal: minimize the FSE popup, restore the
-    // control panel, drop the focus watcher targeting the (now gone) game.
-    // Leaves cap_, presenter_, and renderer_ alive so we can resume in place
-    // when another producer publishes.
-    presenter_.SetVisible(false);
-    fse_visible_ = false;
+    // Fold back to Katanga's "waiting for producer" UI — and fully RELEASE
+    // the FSE session while we wait. Keeping the D3D9 stereo device alive-
+    // but-minimized was the old design (fast re-reveal), but a lingering
+    // fullscreen-exclusive stereo device contends with the next game's
+    // display takeover: observed as a ~25s system-wide wedge ending in a
+    // TDR that killed the freshly launched producer. cap_ and renderer_
+    // stay alive; the reveal path re-Inits the presenter when a producer
+    // publishes again.
     StopForceFocusWatcher();
-    tracked_pid_ = 0;
-    if (tracked_process_handle_) {
+    fse_visible_ = false;
+    // Drop every reference to the producer's texture BEFORE the FSE
+    // teardown modesets — same ordering as App::Stop. CaptureKatanga's ref
+    // would otherwise ride through the teardown, and the cached scaler SRV
+    // would keep the cross-process allocation open on our device.
+    if (auto* kat = dynamic_cast<CaptureKatanga*>(cap_.get())) {
+        kat->ReleaseSharedHold();
+    }
+    renderer_.InvalidateScalerCache();
+    presenter_.Shutdown();
+    // Reset producer-gap telemetry so the reconnect doesn't log a bogus
+    // hours-long "gap ended".
+    last_capture_frame_ts_ = {};
+    producer_gap_logged_   = false;
+    // Keep the tracked producer handle while the process is still ALIVE — a
+    // resolution-change reconnect is the same process, and this handle is
+    // the ONLY death signal we have: Geo-11 never zeroes the mapping slot,
+    // and a dead producer's shared texture keeps serving its last frame at
+    // full fps, so neither the slot grace timer nor frame telemetry ever
+    // notices. Closing it here unconditionally is exactly why an Alt+F4'd
+    // game went undetected after a resolution-change reconnect.
+    if (tracked_process_handle_ &&
+        WaitForSingleObject(tracked_process_handle_, 0) == WAIT_OBJECT_0) {
         CloseHandle(tracked_process_handle_);
         tracked_process_handle_ = nullptr;
+        tracked_pid_ = 0;
+    } else if (!tracked_process_handle_) {
+        tracked_pid_ = 0;
     }
     ShowPanel();
     waiting_katanga_first_frame_ = true;
@@ -671,10 +729,90 @@ void App::ReregisterHotkeys() {
 }
 
 void App::Tick() {
+    // Device-removed watchdog — runs in EVERY state, ~4Hz. The Running-path
+    // checks below catch a TDR mid-session, but a reset while Idle (e.g.
+    // another 3D Vision app engaging stereo and tripping the driver after
+    // our Stop) previously left the control panel white forever: ImGui kept
+    // presenting into a removed device and nothing ever looked at
+    // GetDeviceRemovedReason outside the Running state.
+    if (++dev_check_counter_ >= 30) {
+        dev_check_counter_ = 0;
+        const HRESULT rmv = renderer_.Device()
+            ? renderer_.Device()->GetDeviceRemovedReason() : S_OK;
+        if (rmv != S_OK) {
+            Log(NV3D::LogLevel::Warning,
+                L"App::Tick  D3D11 device removed (hr=0x%08X) in state=%d — recovering",
+                (unsigned)rmv, (int)state_);
+            if (state_ == AppState::Running) {
+                presenter_.NotifyDeviceLost();
+                Stop();
+            }
+            state_ = AppState::SourceLost;
+            status_extra_ = L"GPU reset detected";
+            if (renderer_.RecreateDevice()) {
+                state_ = AppState::Idle;
+                status_extra_ = L"GPU reset recovered — click Start to retry";
+            }
+        }
+    }
+
+    // Track the last foreground process that isn't us and isn't the shell
+    // (explorer owns the taskbar, so a taskbar click would otherwise poison
+    // this). Runs in every state: the value matters at the Katanga reveal,
+    // but it's usually populated BEFORE Start — the user is in the game,
+    // then clicks over to our panel and hits Start, and the first frame
+    // reveals while our panel is still foreground.
+    if (++fg_sample_counter_ >= 15) {   // ~every 120ms at 8ms ticks
+        fg_sample_counter_ = 0;
+        if (HWND fg = GetForegroundWindow()) {
+            DWORD fg_pid = 0;
+            GetWindowThreadProcessId(fg, &fg_pid);
+            DWORD shell_pid = 0;
+            if (HWND shell = GetShellWindow()) {
+                GetWindowThreadProcessId(shell, &shell_pid);
+            }
+            if (fg_pid != 0 && fg_pid != GetCurrentProcessId() &&
+                fg_pid != shell_pid) {
+                last_external_fg_pid_ = fg_pid;
+            }
+        }
+    }
+
     if (state_ == AppState::Running) {
         bool staging_dirty = false;
 
-        if (cap_) {
+        // While the user has the FSE popup hidden (Ctrl+F8), pause Katanga
+        // acquisition entirely. ReleaseSharedHold on the hide transition is
+        // otherwise defeated ~8ms later: the next Tick's TryAcquire
+        // re-imports the producer's texture BEFORE the window thread even
+        // executes the SW_MINIMIZE (every log shows "imported" landing
+        // between "shared hold released" and "user hid popup"). Pausing
+        // keeps the cross-process hold dropped for the entire hidden
+        // period; the first resumed tick after restore re-imports and
+        // re-evaluates producer-death / resolution-change state. The
+        // first-frame waiting state still polls — the popup is hidden
+        // there too, and TryAcquire is exactly how the reveal triggers.
+        const bool katanga_paused =
+            settings_.source_kind == SourceKind::Katanga &&
+            !fse_visible_ && !waiting_katanga_first_frame_;
+
+        if (cap_ && katanga_paused) {
+            // Deliberately idle: no acquire, no copy, no telemetry. But
+            // producer-DEATH detection must still run — a dead producer is
+            // otherwise silent (Geo-11 never zeroes the mapping slot, and
+            // its shared texture keeps serving the last frame), so our FSE
+            // stereo session would linger underneath until the next game
+            // launch fights it for the display (observed: ~25s system-wide
+            // wedge → TDR that killed the new game).
+            if (tracked_process_handle_ &&
+                WaitForSingleObject(tracked_process_handle_, 0) == WAIT_OBJECT_0) {
+                Log(NV3D::LogLevel::Info,
+                    L"App::Tick  Katanga producer exited while hidden — stopping session");
+                Stop();
+                ShowPanel();
+                status_extra_ = L"game exited — click Start for the next session";
+            }
+        } else if (cap_) {
             // Capture mode. Drain WGC if a fresh frame is available; otherwise
             // leave the staging texture holding the last captured frame.
             ID3D11Texture2D* src = nullptr;
@@ -706,17 +844,60 @@ void App::Tick() {
                     HWND  prev_fg     = GetForegroundWindow();
                     DWORD prev_fg_pid = 0;
                     if (prev_fg) GetWindowThreadProcessId(prev_fg, &prev_fg_pid);
-                    const bool game_was_foreground =
-                        prev_fg && prev_fg_pid != 0 && prev_fg_pid != GetCurrentProcessId();
+                    // Pick the process to hand focus to. A directly-
+                    // foreground game is the strongest signal, but in the
+                    // COMMON flow the user has just clicked Start on our
+                    // control panel, so the foreground at first-frame is
+                    // us — fall back to the last non-self, non-shell
+                    // foreground process (sampled near the top of Tick):
+                    // that's the game they were in moments before.
+                    DWORD hand_off_pid = 0;
+                    if (prev_fg && prev_fg_pid != 0 &&
+                        prev_fg_pid != GetCurrentProcessId()) {
+                        hand_off_pid = prev_fg_pid;
+                    } else if (last_external_fg_pid_ != 0) {
+                        hand_off_pid = last_external_fg_pid_;
+                        Log(NV3D::LogLevel::Info,
+                            L"App::Tick  Katanga reveal: foreground is us — using last "
+                            L"external foreground pid=%lu as the game",
+                            (unsigned long)hand_off_pid);
+                    }
+
+                    // Waiting mode fully releases the FSE session, so a
+                    // reconnect reveal has to rebuild it. Note prev_fg was
+                    // captured BEFORE this — the FSE bring-up force-
+                    // foregrounds the popup, which would make the game
+                    // detection above see our own process.
+                    if (!presenter_.IsActive()) {
+                        Log(NV3D::LogLevel::Info,
+                            L"App::Tick  reveal: (re)initializing FSE presenter");
+                        // Pass OUR pid, same as Start does for Katanga: the
+                        // lib's VRto3D loop just pins the popup while the
+                        // tracked process lives (it never focus-steals), and
+                        // the popup lifecycle here is app-driven. Passing 0
+                        // would select the lib's legacy minimize-on-host-
+                        // focus-loss mode — the popup would vanish the
+                        // moment the game takes focus.
+                        if (!presenter_.Init(renderer_.Device(), settings_,
+                                             GetCurrentProcessId())) {
+                            Log(NV3D::LogLevel::Error,
+                                L"App::Tick  reveal: presenter re-init failed — stopping session");
+                            src->Release();
+                            Stop();
+                            state_ = AppState::SourceLost;
+                            status_extra_ = L"3D re-init failed — click Start to retry";
+                            return;
+                        }
+                    }
 
                     fse_visible_ = true;
                     presenter_.SetVisible(true);
                     status_extra_.clear();
 
-                    if (game_was_foreground) {
+                    if (hand_off_pid != 0) {
                         Log(NV3D::LogLevel::Info,
                             L"App::Tick  Katanga reveal: handing focus to game pid=%lu",
-                            (unsigned long)prev_fg_pid);
+                            (unsigned long)hand_off_pid);
                         HidePanel();
                         // Pump so the panel hide's WM_KILLFOCUS lands before
                         // the watcher starts yanking foreground around — same
@@ -729,7 +910,7 @@ void App::Tick() {
                                 DispatchMessageW(&pump);
                             }
                         }
-                        tracked_pid_ = prev_fg_pid;
+                        tracked_pid_ = hand_off_pid;
                         StartForceFocusWatcher(tracked_pid_);
                         // Open a SYNCHRONIZE handle so Tick can detect game
                         // exit and auto-minimize. Geo-11 leaves the mapping
@@ -740,17 +921,67 @@ void App::Tick() {
                             CloseHandle(tracked_process_handle_);
                             tracked_process_handle_ = nullptr;
                         }
-                        tracked_process_handle_ = OpenProcess(SYNCHRONIZE, FALSE, prev_fg_pid);
+                        tracked_process_handle_ = OpenProcess(SYNCHRONIZE, FALSE, hand_off_pid);
                         if (!tracked_process_handle_) {
                             Log(NV3D::LogLevel::Warning,
                                 L"App::Tick  OpenProcess(SYNCHRONIZE, pid=%lu) failed err=%lu — "
                                 L"producer-death detection disabled this session",
-                                (unsigned long)prev_fg_pid, GetLastError());
+                                (unsigned long)hand_off_pid, GetLastError());
                         }
+                    } else if (tracked_pid_ != 0 && tracked_process_handle_ &&
+                               WaitForSingleObject(tracked_process_handle_, 0) ==
+                                   WAIT_TIMEOUT) {
+                        // No game in the foreground at this reveal — typical
+                        // for a resolution-change reconnect, where focus is
+                        // in flux while the game rebuilds its swap chain.
+                        // But we still track the producer from the previous
+                        // reveal (waiting mode keeps the handle while the
+                        // process lives), so hand focus back to it instead
+                        // of dropping the hand-off on the floor.
+                        Log(NV3D::LogLevel::Info,
+                            L"App::Tick  Katanga reveal: refocusing tracked producer pid=%lu",
+                            (unsigned long)tracked_pid_);
+                        HidePanel();
+                        StartForceFocusWatcher(tracked_pid_);
                     } else {
                         Log(NV3D::LogLevel::Info,
                             L"App::Tick  Katanga reveal: no game foreground detected — "
                             L"user will need to click the game window to give it focus");
+                    }
+                }
+
+                // Late producer adoption: if we never identified the
+                // producer's process (its window wasn't foreground at the
+                // reveal), keep watching — whatever the user focuses while
+                // the 3D output is live is the game in practice. Without a
+                // process handle an Alt+F4'd producer is UNDETECTABLE (see
+                // the paused-branch comment above), and a wrong adoption
+                // self-heals: its exit just folds us to waiting, where the
+                // still-live producer's next frame re-reveals within ~2s.
+                if (settings_.source_kind == SourceKind::Katanga &&
+                    !tracked_process_handle_ && fse_visible_ &&
+                    ++adopt_check_counter_ >= 60) {   // ~every 500ms at 8ms ticks
+                    adopt_check_counter_ = 0;
+                    HWND  fg     = GetForegroundWindow();
+                    DWORD fg_pid = 0;
+                    if (fg) GetWindowThreadProcessId(fg, &fg_pid);
+                    const bool candidate =
+                        fg_pid != 0 && fg_pid != GetCurrentProcessId();
+                    if (candidate && fg_pid == adopt_candidate_pid_) {
+                        // Same non-self process foreground on two probes in
+                        // a row (~1s) — adopt it as the producer.
+                        tracked_process_handle_ =
+                            OpenProcess(SYNCHRONIZE, FALSE, fg_pid);
+                        if (tracked_process_handle_) {
+                            tracked_pid_ = fg_pid;
+                            Log(NV3D::LogLevel::Info,
+                                L"App::Tick  adopted foreground pid=%lu as Katanga "
+                                L"producer — death detection armed",
+                                (unsigned long)fg_pid);
+                        }
+                        adopt_candidate_pid_ = 0;
+                    } else {
+                        adopt_candidate_pid_ = candidate ? fg_pid : 0;
                     }
                 }
                 const LONG rw = capture_src_region_.right  - capture_src_region_.left;
@@ -767,6 +998,15 @@ void App::Tick() {
                 src->Release();
             }
             if (cap_->IsLost()) {
+                // IsLost usually means the GPU TDR'd (device removed). Tell
+                // NV3DLib BEFORE Stop() tears it down: the D3D9 device on
+                // the same adapter is gone too, and without the dead-mark
+                // its Shutdown takes the live path — Stereo_DestroyHandle +
+                // COM Release into a wedged kernel driver can block forever.
+                if (renderer_.Device() &&
+                    renderer_.Device()->GetDeviceRemovedReason() != S_OK) {
+                    presenter_.NotifyDeviceLost();
+                }
                 Stop();
                 state_ = AppState::SourceLost;
                 status_extra_ = L"source closed";
@@ -797,11 +1037,42 @@ void App::Tick() {
                 // Producer game process exited. The mapping slot may still
                 // hold a stale handle (Geo-11 doesn't clear it on exit), so
                 // CaptureKatanga can't detect this on its own — we have to.
+                // Full Stop rather than fold-to-waiting: staying armed means
+                // retrying OpenSharedResource on the dead game's stale
+                // handle at tick rate until the next producer publishes
+                // (observed: 21s of E_INVALIDARG at 125Hz), and a fresh
+                // Start is the cleanest state for a new game session.
                 Log(NV3D::LogLevel::Info,
-                    L"App::Tick  Katanga producer process exited — returning to waiting state");
-                EnterKatangaWaitingMode();
-                if (auto* kat = dynamic_cast<CaptureKatanga*>(cap_.get())) {
-                    kat->ResetForReconnect();
+                    L"App::Tick  Katanga producer process exited — stopping session");
+                Stop();
+                ShowPanel();
+                status_extra_ = L"game exited — click Start for the next session";
+            }
+
+            // Producer-gap telemetry. Pins down what the "brief freeze"
+            // actually is on the next repro: a gap here WITH an NV3DLib
+            // "GPU stall — fence wait took Nms" in the same window is a
+            // device-wide GPU/driver stall; a gap with clean fence waits is
+            // the producer (game) hitching on its own.
+            {
+                const auto gap_now = std::chrono::steady_clock::now();
+                if (staging_dirty) {
+                    if (producer_gap_logged_) {
+                        const auto gap_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                            gap_now - last_capture_frame_ts_).count();
+                        Log(NV3D::LogLevel::Warning,
+                            L"App::Tick  producer frame gap ended after %lld ms",
+                            static_cast<long long>(gap_ms));
+                        producer_gap_logged_ = false;
+                    }
+                    last_capture_frame_ts_ = gap_now;
+                } else if (last_capture_frame_ts_ != std::chrono::steady_clock::time_point{} &&
+                           !producer_gap_logged_ &&
+                           gap_now - last_capture_frame_ts_ > std::chrono::milliseconds(1000)) {
+                    Log(NV3D::LogLevel::Warning,
+                        L"App::Tick  producer frame gap >1000ms (ongoing) — check for an "
+                        L"NV3DLib GPU-stall line in the same window");
+                    producer_gap_logged_ = true;
                 }
             }
         } else {
@@ -844,6 +1115,9 @@ void App::Tick() {
                 Log(NV3D::LogLevel::Warning,
                     L"App::Tick  D3D11 device removed (hr=0x%08X) — stopping + rebuilding device",
                     (unsigned)rmv);
+                // Same-adapter D3D9 device is gone too — force the dead-path
+                // teardown before Stop() releases NV3DLib.
+                presenter_.NotifyDeviceLost();
                 Stop();
                 state_ = AppState::SourceLost;
                 status_extra_ = L"D3D11 device removed";
@@ -852,9 +1126,46 @@ void App::Tick() {
                     status_extra_ = L"GPU TDR recovered — click Start to retry";
                 }
             } else {
-                presenter_.SubmitFrame(renderer_.Staging());
+                const HRESULT phr = presenter_.SubmitFrame(renderer_.Staging());
                 fps_frames_++;
                 last_present_ts_ = now;
+                // Presenter-death watchdog (see App.h). A single failure can
+                // be a one-off (the async worker reports the PREVIOUS
+                // frame's result, so one bad frame surfaces once) — a
+                // sustained streak means the D3D9 side is dead while D3D11
+                // is fine, and nothing else will ever notice.
+                if (FAILED(phr)) {
+                    if (++submit_fail_streak_ >= 40) {
+                        submit_fail_streak_ = 0;
+                        const bool recent =
+                            last_presenter_dead_recovery_.time_since_epoch().count() != 0 &&
+                            (now - last_presenter_dead_recovery_) < std::chrono::seconds(10);
+                        last_presenter_dead_recovery_ = now;
+                        Log(NV3D::LogLevel::Warning,
+                            L"App::Tick  presenter dead (Present hr=0x%08X for 40 frames) — %s",
+                            (unsigned)phr,
+                            recent ? L"second failure within 10s, stopping session"
+                                   : L"rebuilding FSE session");
+                        presenter_.NotifyDeviceLost();
+                        if (!recent && settings_.source_kind == SourceKind::Katanga) {
+                            // Producer is alive (its death has its own
+                            // detection path) — fold to waiting; the reveal
+                            // machinery re-Inits the presenter and refocuses
+                            // the game on the next captured frame.
+                            EnterKatangaWaitingMode();
+                            if (auto* kat = dynamic_cast<CaptureKatanga*>(cap_.get())) {
+                                kat->ResetForReconnect();
+                            }
+                        } else {
+                            Stop();
+                            ShowPanel();
+                            state_ = AppState::SourceLost;
+                            status_extra_ = L"3D output device hung — click Start to retry";
+                        }
+                    }
+                } else {
+                    submit_fail_streak_ = 0;
+                }
             }
         }
 

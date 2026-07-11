@@ -159,11 +159,15 @@ private:
     void StartForceFocusWatcher(DWORD pid);
     void StopForceFocusWatcher();
 
-    // Soft transition back to Katanga's "waiting for producer" UI: hide the
-    // FSE popup, restore the control panel, drop the focus watcher. Reverse
-    // of the reveal sequence in Tick. Caller is responsible for calling
-    // ResetForReconnect() on the CaptureKatanga so the next TryAcquire can
-    // detect a new producer.
+    // Transition back to Katanga's "waiting for producer" UI. Fully
+    // RELEASES the FSE D3D9 session (a lingering fullscreen-exclusive
+    // stereo device wedges the next game's display takeover); the reveal
+    // path in Tick re-Inits the presenter when a producer publishes again.
+    // Keeps the tracked producer handle while that process is still alive
+    // (res-change reconnects are the same process, and the handle is the
+    // only Katanga producer-death signal that exists). Caller is
+    // responsible for calling ResetForReconnect() on the CaptureKatanga so
+    // the next TryAcquire can detect a new producer.
     void EnterKatangaWaitingMode();
 
     // Diagnostic frame counter — every N ticks we log the live D3D11 device
@@ -171,6 +175,32 @@ private:
     // partially-removed device before the explicit TDR-detection paths
     // (CaptureKatanga IsLost, pre-SubmitFrame check) fire.
     int                                diag_periodic_counter_ = 0;
+    // Any-state device-removed watchdog cadence (see top of Tick).
+    int                                dev_check_counter_ = 0;
+    // Late producer-adoption probe (Katanga): when no producer process was
+    // identified at reveal, Tick periodically samples the foreground window
+    // and adopts a stable non-self pid so death detection works. Counter is
+    // the probe cadence; candidate is the pid seen on the previous probe.
+    int                                adopt_check_counter_ = 0;
+    DWORD                              adopt_candidate_pid_ = 0;
+    // Last foreground process that isn't us and isn't the shell, sampled
+    // continuously in Tick. The Katanga reveal falls back to this when the
+    // foreground at first-frame is our own control panel — the COMMON case,
+    // since the user just clicked Start on us while the game was already
+    // running. Without it the focus hand-off targeted nothing and the
+    // restored popup kept activation on our process instead of the game.
+    int                                fg_sample_counter_ = 0;
+    DWORD                              last_external_fg_pid_ = 0;
+    // Presenter-death watchdog. Windows can context-reset JUST our D3D9 FSE
+    // device (D3DERR_DEVICEHUNG, no system-wide TDR) — the D3D11 device
+    // stays healthy so the device-removed watchdogs never fire, NV3DLib
+    // marks itself dead and fast-fails every Present, and the 3D window
+    // freezes forever. Tick counts consecutive failing SubmitFrame HRESULTs
+    // and bounces the FSE session when the streak says the presenter is
+    // gone. The timestamp throttles back-to-back recoveries so a genuinely
+    // broken driver state degrades to a Stop instead of an FSE-bounce loop.
+    int                                submit_fail_streak_ = 0;
+    std::chrono::steady_clock::time_point last_presenter_dead_recovery_{};
 
     // Telemetry / status
     UINT                               last_src_w_ = 0;
@@ -181,6 +211,12 @@ private:
     float                              fps_       = 0.0f;
     uint32_t                           test_pattern_frame_ = 0;
     std::chrono::steady_clock::time_point last_present_ts_{};
+    // Producer-gap telemetry: timestamp of the last tick that yielded a new
+    // capture frame, and whether an over-1s gap warning is currently open.
+    // Correlated against NV3DLib's fence-stall log line to tell a
+    // device-wide GPU stall apart from a game-side hitch.
+    std::chrono::steady_clock::time_point last_capture_frame_ts_{};
+    bool                               producer_gap_logged_ = false;
     std::wstring                       status_extra_;
 };
 

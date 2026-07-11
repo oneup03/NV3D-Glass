@@ -54,14 +54,23 @@ public:
     ID3D11Device*        Device()       { return d3d_.Get(); }
     ID3D11DeviceContext* Context()      { return ctx_.Get(); }
 
-    // Capture-pipeline staging texture (MISC_SHARED + BGRA8). Allocated once
-    // per session via CreateFixedStaging — we deliberately don't recreate it
-    // on source-dim changes mid-stream, because changing the texture the
-    // NV3DLib backend has cached forces a re-import of the shared D3D9 view
-    // and causes visible artifacts on some configs. Caller is expected to
-    // pick a staging size at Start time and live with it.
+    // Capture-pipeline staging textures (MISC_SHARED + BGRA8), a fixed ring
+    // of kStagingRing. Allocated once per session via CreateFixedStaging —
+    // dims are deliberately not recreated on source-dim changes mid-stream.
+    //
+    // Why a ring: NV3DLib's D3D9 side reads the staging through a legacy
+    // KMT shared handle, which has ZERO implicit cross-API synchronization.
+    // With a single staging, tick N+1's CopyResource/scaler-draw overwrites
+    // the very allocation the D3D9 StretchRect for tick N may still be
+    // reading — a permanent write/read race on the exact driver path that
+    // is fragile. Each new frame is written into the NEXT ring slot instead;
+    // Staging() returns the last-written slot (what should be presented).
+    // Ring depth 3 (not 2): if NV3DLib's worker drops a frame, a 2-deep ring
+    // wraps back onto a slot whose present may still be in flight after
+    // only one tick (~8ms); 3-deep gives the GPU ≥3 ticks (~24ms) to retire
+    // a read before the slot is rewritten.
     bool             CreateFixedStaging(UINT w, UINT h);
-    ID3D11Texture2D* Staging() const { return staging_.Get(); }
+    ID3D11Texture2D* Staging() const { return staging_[staging_idx_].Get(); }
     UINT             StagingWidth()  const { return staging_w_; }
     UINT             StagingHeight() const { return staging_h_; }
     // Copy src into staging via CopyResource (matching dims) or a centered
@@ -83,18 +92,35 @@ public:
     void             FillTestPattern(uint32_t frame);
     void             ReleaseStaging();
 
+    // Drop the cached scaler SRV (and its reference to the last scaler
+    // source). MUST be called whenever the capture source's shared texture
+    // is being released deliberately — e.g. CaptureKatanga::ReleaseSharedHold
+    // before an FSE minimize, or ResetForReconnect on producer loss. The SRV
+    // holds the cross-process allocation open on our device; keeping it
+    // across the SW_MINIMIZE stereo-teardown defeats the entire point of
+    // releasing the capture-side hold (observed TDR surface).
+    void             InvalidateScalerCache();
+
 private:
     bool CreateD3D();
     bool CreateSwapChain(HWND hwnd);
     bool CreateBackBufferRTV();
+
+    // Rotate to the next ring slot; every frame-producing entry point
+    // (CopyCaptureToStaging / CopyCaptureRegionToStaging / FillTestPattern)
+    // calls this exactly once before writing.
+    void AdvanceStaging() { staging_idx_ = (staging_idx_ + 1) % kStagingRing; }
+
+    static constexpr UINT kStagingRing = 3;
 
     HWND                                            hwnd_       = nullptr;
     Microsoft::WRL::ComPtr<ID3D11Device>            d3d_;
     Microsoft::WRL::ComPtr<ID3D11DeviceContext>     ctx_;
     Microsoft::WRL::ComPtr<IDXGISwapChain1>         swap_;
     Microsoft::WRL::ComPtr<ID3D11RenderTargetView>  rtv_;
-    Microsoft::WRL::ComPtr<ID3D11Texture2D>         staging_;
-    Microsoft::WRL::ComPtr<ID3D11RenderTargetView>  staging_rtv_;
+    Microsoft::WRL::ComPtr<ID3D11Texture2D>         staging_[kStagingRing];
+    Microsoft::WRL::ComPtr<ID3D11RenderTargetView>  staging_rtv_[kStagingRing];
+    UINT                                            staging_idx_ = 0;
     UINT                                            staging_w_  = 0;
     UINT                                            staging_h_  = 0;
     UINT                                            swap_w_     = 0;
