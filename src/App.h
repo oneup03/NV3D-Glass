@@ -201,6 +201,13 @@ private:
     // broken driver state degrades to a Stop instead of an FSE-bounce loop.
     int                                submit_fail_streak_ = 0;
     std::chrono::steady_clock::time_point last_presenter_dead_recovery_{};
+    // Producer-death grace. When the Katanga producer process exits we do
+    // NOT Stop() on the same tick: the driver is still reclaiming the dead
+    // game's GPU context, and releasing our live FSE stereo device into
+    // that window strained the driver badly enough (D3D9 release stalled
+    // 1.8s) that the eventual process exit hard-froze the display. Arm a
+    // ~1s deadline instead and Stop when it lapses. Zero = unarmed.
+    std::chrono::steady_clock::time_point producer_death_stop_at_{};
 
     // Telemetry / status
     UINT                               last_src_w_ = 0;

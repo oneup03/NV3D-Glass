@@ -503,6 +503,7 @@ void App::Stop() {
     presenter_.Shutdown();
     renderer_.ReleaseStaging();
     if (state_ == AppState::Running) state_ = AppState::Idle;
+    producer_death_stop_at_ = {};
     tracked_pid_ = 0;
     if (tracked_process_handle_) {
         CloseHandle(tracked_process_handle_);
@@ -806,11 +807,21 @@ void App::Tick() {
             // wedge → TDR that killed the new game).
             if (tracked_process_handle_ &&
                 WaitForSingleObject(tracked_process_handle_, 0) == WAIT_OBJECT_0) {
-                Log(NV3D::LogLevel::Info,
-                    L"App::Tick  Katanga producer exited while hidden — stopping session");
-                Stop();
-                ShowPanel();
-                status_extra_ = L"game exited — click Start for the next session";
+                // Same death grace as the visible path — see App.h.
+                const auto death_now = std::chrono::steady_clock::now();
+                if (producer_death_stop_at_.time_since_epoch().count() == 0) {
+                    Log(NV3D::LogLevel::Info,
+                        L"App::Tick  Katanga producer exited while hidden — stopping "
+                        L"session after 1s driver-settle grace");
+                    producer_death_stop_at_ = death_now + std::chrono::seconds(1);
+                } else if (death_now >= producer_death_stop_at_) {
+                    producer_death_stop_at_ = {};
+                    Log(NV3D::LogLevel::Info,
+                        L"App::Tick  producer-death grace elapsed — stopping session");
+                    Stop();
+                    ShowPanel();
+                    status_extra_ = L"game exited — click Start for the next session";
+                }
             }
         } else if (cap_) {
             // Capture mode. Drain WGC if a fresh frame is available; otherwise
@@ -1042,11 +1053,23 @@ void App::Tick() {
                 // handle at tick rate until the next producer publishes
                 // (observed: 21s of E_INVALIDARG at 125Hz), and a fresh
                 // Start is the cleanest state for a new game session.
-                Log(NV3D::LogLevel::Info,
-                    L"App::Tick  Katanga producer process exited — stopping session");
-                Stop();
-                ShowPanel();
-                status_extra_ = L"game exited — click Start for the next session";
+                // The Stop is DELAYED by the death grace (see App.h) so our
+                // FSE release doesn't race the driver's reclamation of the
+                // dead game's GPU context.
+                const auto death_now = std::chrono::steady_clock::now();
+                if (producer_death_stop_at_.time_since_epoch().count() == 0) {
+                    Log(NV3D::LogLevel::Info,
+                        L"App::Tick  Katanga producer process exited — stopping session "
+                        L"after 1s driver-settle grace");
+                    producer_death_stop_at_ = death_now + std::chrono::seconds(1);
+                } else if (death_now >= producer_death_stop_at_) {
+                    producer_death_stop_at_ = {};
+                    Log(NV3D::LogLevel::Info,
+                        L"App::Tick  producer-death grace elapsed — stopping session");
+                    Stop();
+                    ShowPanel();
+                    status_extra_ = L"game exited — click Start for the next session";
+                }
             }
 
             // Producer-gap telemetry. Pins down what the "brief freeze"

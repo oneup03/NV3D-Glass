@@ -53,8 +53,17 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int) {
     nv3dg::Log(NV3D::LogLevel::Info, L"main: after winrt::uninit_apartment");
 
     nv3dg::ShutdownFileLog();
-    return rc;
-    // ~App() runs after this on stack unwind. Its Shutdown() call is silent
-    // (log file closed) but should be a no-op given app.Shutdown() already
-    // ran above.
+
+    // Skip CRT static destructors and DLL_PROCESS_DETACH entirely. A hard
+    // display freeze (reboot required) was observed AFTER the last logged
+    // line above — i.e. inside process teardown, where nvd3dumx.dll /
+    // nvapi64.dll / d3d9.dll run their detach code against driver stereo
+    // state our FSE teardown had just strained (that session's D3D9 release
+    // stalled 1.8s while the driver reclaimed a dying game's GPU context).
+    // Nothing past this point matters: settings are persisted, every
+    // subsystem is explicitly Shutdown, the log is flushed and closed.
+    // ExitProcess would still run DLL_PROCESS_DETACH; TerminateProcess does
+    // not, and never returns on success.
+    TerminateProcess(GetCurrentProcess(), static_cast<UINT>(rc));
+    return rc;  // unreachable
 }
