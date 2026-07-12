@@ -261,6 +261,20 @@ void Gui::DrawOutputSection(App& app) {
 
     ImGui::Spacing();
 
+    // Cursor lock + 3D cursor. Both only take effect while the 3D output is
+    // showing; the clip follows whichever external window has focus, so
+    // alt+tabbing updates the lock region (and focusing our panel / the
+    // desktop frees the pointer).
+    ImGui::Checkbox("Lock cursor to captured window", &s.lock_cursor);
+
+    ImGui::Checkbox("Draw 3D cursor", &s.draw_3d_cursor);
+    if (s.draw_3d_cursor) {
+        ImGui::SliderFloat("Cursor depth", &s.cursor_parallax, -0.05f, 0.05f, "%.3f");
+        ImGui::TextDisabled("(0 = screen plane; the OS cursor never appears in the 3D view)");
+    }
+
+    ImGui::Spacing();
+
     // Gate on whether the 3D output window (NV3DLib's FSE popup) is alive.
     // Belt-and-braces: presenter.IsActive() is the primary signal, but we
     // also accept state==Running as a fallback in case the two desync (the

@@ -48,6 +48,23 @@ struct Settings {
 
     bool         auto_reacquire = true;
 
+    // ---- Cursor lock / 3D cursor ----
+    // Clip the mouse to the captured window/monitor while the 3D output is
+    // showing (so mouse-look games don't let the pointer wander off onto the
+    // desktop / other monitors). The clip region follows the current
+    // foreground window, so alt+tabbing updates it. Only active while the FSE
+    // popup is visible; released on every teardown path.
+    bool         lock_cursor = false;
+    // Draw a software reticle into the SbS output at the mouse's position
+    // within the captured content. The captured frame never contains the OS
+    // cursor (WGC cursor capture is off), so this is the only pointer the 3D
+    // view can show.
+    bool         draw_3d_cursor = false;
+    // Right/left-eye horizontal split for the 3D cursor as a fraction of the
+    // per-eye width. 0 = screen plane. Small +/- values push the reticle
+    // behind / in front of the screen. Kept tiny — a few % is a lot of depth.
+    float        cursor_parallax = 0.0f;
+
     // ---- Hotkeys (persisted) ----
     HotkeyDef hk_eyeswap     { MOD_CONTROL, VK_F9 };
     HotkeyDef hk_toggle_panel{ MOD_CONTROL | MOD_ALT, 'S' };

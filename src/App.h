@@ -108,6 +108,17 @@ private:
     HWND   ResolveCaptureTarget(SourceKind* out_kind, HWND* out_hwnd, HMONITOR* out_hmon) const;
     HMONITOR ResolveOutputMonitor() const;
 
+    // Cursor lock / 3D cursor. ComputeCaptureContentRect returns the screen-
+    // space rectangle of what we're capturing — the ClipCursor region AND the
+    // domain the mouse position is normalized against for the 3D cursor. It
+    // follows the current foreground window (so alt+tab updates it), falling
+    // back to the resolved capture target when the foreground is one of our
+    // own windows / the shell. UpdateCursorLock runs every Tick and asserts or
+    // releases the clip; ReleaseCursorClip is the teardown path.
+    bool   ComputeCaptureContentRect(RECT* out) const;
+    void   UpdateCursorLock();
+    void   ReleaseCursorClip();
+
     static LRESULT CALLBACK StaticWndProc(HWND, UINT, WPARAM, LPARAM);
 
     HINSTANCE                          hinstance_     = nullptr;
@@ -191,6 +202,15 @@ private:
     // restored popup kept activation on our process instead of the game.
     int                                fg_sample_counter_ = 0;
     DWORD                              last_external_fg_pid_ = 0;
+
+    // Cursor-lock state. cursor_clipped_ tracks whether we currently hold a
+    // ClipCursor so we only call ClipCursor(nullptr) when we actually set one.
+    // last_content_rect_ is the capture content rect computed once per Tick
+    // (in UpdateCursorLock) and reused by the 3D-cursor draw so we don't
+    // resolve the foreground window twice.
+    bool                               cursor_clipped_    = false;
+    bool                               last_content_valid_ = false;
+    RECT                               last_content_rect_ { 0, 0, 0, 0 };
     // Presenter-death watchdog. Windows can context-reset JUST our D3D9 FSE
     // device (D3DERR_DEVICEHUNG, no system-wide TDR) — the D3D11 device
     // stays healthy so the device-removed watchdogs never fire, NV3DLib

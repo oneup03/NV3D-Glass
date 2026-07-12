@@ -502,6 +502,7 @@ void App::Stop() {
         (void*)cap_.get(),
         presenter_.IsActive() ? L"true" : L"false",
         (int)state_);
+    ReleaseCursorClip();
     StopForceFocusWatcher();
     // Drop every reference to the producer's cross-process texture BEFORE
     // the D3D9 teardown. cap_->Stop() alone releases CaptureKatanga's ref
@@ -618,8 +619,91 @@ void App::ToggleFseVisible() {
         StartForceFocusWatcher(tracked_pid_);
         status_extra_.clear();
     } else {
+        ReleaseCursorClip();
         StopForceFocusWatcher();
         status_extra_ = L"FSE minimized (Ctrl+F8 to restore)";
+    }
+}
+
+void App::ReleaseCursorClip() {
+    if (cursor_clipped_) {
+        ClipCursor(nullptr);
+        cursor_clipped_ = false;
+    }
+}
+
+bool App::ComputeCaptureContentRect(RECT* out) const {
+    if (!out) return false;
+
+    // Follow the current foreground window, but ONLY when it's a genuine
+    // external window (not one of ours, not the desktop shell). This is the
+    // whole "lock region follows alt+tab" behavior — and, just as important,
+    // it's trap-proof: the instant focus lands on our control panel or the
+    // desktop, this returns false and UpdateCursorLock frees the cursor, so
+    // the user can always reclaim the pointer by tabbing to us or the desktop.
+    // We deliberately do NOT fall back to the configured capture target when
+    // the foreground is ours — doing so would yank the cursor back into the
+    // game the moment the user restored our panel from the taskbar.
+    HWND fg = GetForegroundWindow();
+    if (!fg || !IsWindow(fg) || !IsWindowVisible(fg) || IsIconic(fg)) return false;
+
+    DWORD fg_pid = 0;
+    GetWindowThreadProcessId(fg, &fg_pid);
+    if (fg_pid == 0 || fg_pid == GetCurrentProcessId()) return false;
+
+    DWORD shell_pid = 0;
+    if (HWND shell = GetShellWindow()) {
+        GetWindowThreadProcessId(shell, &shell_pid);
+    }
+    if (fg_pid == shell_pid) return false;
+
+    // Prefer the client rect (excludes title bar / borders) in screen space.
+    RECT cr{};
+    POINT tl{ 0, 0 };
+    if (GetClientRect(fg, &cr) && ClientToScreen(fg, &tl) &&
+        cr.right > cr.left && cr.bottom > cr.top) {
+        *out = RECT{ tl.x, tl.y,
+                     tl.x + (cr.right - cr.left),
+                     tl.y + (cr.bottom - cr.top) };
+        return true;
+    }
+    // Degenerate client rect (some borderless / off-screen windows) — fall
+    // back to the outer window rect.
+    RECT wr{};
+    if (GetWindowRect(fg, &wr) && wr.right > wr.left && wr.bottom > wr.top) {
+        *out = wr;
+        return true;
+    }
+    return false;
+}
+
+void App::UpdateCursorLock() {
+    // Both cursor features only make sense while the 3D output is actually on
+    // screen and a capture session is live.
+    const bool features_active =
+        state_ == AppState::Running && fse_visible_ &&
+        !waiting_katanga_first_frame_ &&
+        (settings_.lock_cursor || settings_.draw_3d_cursor);
+
+    last_content_valid_ = false;
+    if (features_active) {
+        RECT rc{};
+        if (ComputeCaptureContentRect(&rc)) {
+            last_content_rect_  = rc;
+            last_content_valid_ = true;
+        }
+    }
+
+    // Assert or release the clip. ClipCursor must be re-asserted every Tick:
+    // the OS silently drops any clip on a foreground change, so a one-shot
+    // call wouldn't survive the game gaining/losing focus.
+    const bool locking =
+        features_active && settings_.lock_cursor && last_content_valid_;
+    if (locking) {
+        ClipCursor(&last_content_rect_);
+        cursor_clipped_ = true;
+    } else {
+        ReleaseCursorClip();
     }
 }
 
@@ -695,6 +779,7 @@ void App::EnterKatangaWaitingMode() {
     // TDR that killed the freshly launched producer. cap_ and renderer_
     // stay alive; the reveal path re-Inits the presenter when a producer
     // publishes again.
+    ReleaseCursorClip();
     StopForceFocusWatcher();
     fse_visible_ = false;
     // Drop every reference to the producer's texture BEFORE the FSE
@@ -792,6 +877,12 @@ void App::Tick() {
             }
         }
     }
+
+    // Cursor lock: assert/release the ClipCursor and refresh the cached
+    // capture content rect that the 3D-cursor draw below reuses. Runs in every
+    // state so a transition out of Running (Stop, source lost) frees the clip
+    // on the next Tick even if an explicit teardown path was missed.
+    UpdateCursorLock();
 
     if (state_ == AppState::Running) {
         bool staging_dirty = false;
@@ -1118,6 +1209,29 @@ void App::Tick() {
             // independently of any capture issues.
             renderer_.FillTestPattern(test_pattern_frame_++);
             staging_dirty = true;
+        }
+
+        // 3D cursor: composite a reticle into the freshly-written staging slot
+        // at the mouse's position within the captured content. Only on a dirty
+        // frame — the copy above fully overwrote the slot, so the reticle lands
+        // on clean content with no accumulation; on a heartbeat-only present
+        // the previous frame's reticle is still baked in, which is fine for an
+        // idle source. Uses the content rect UpdateCursorLock cached this Tick.
+        if (settings_.draw_3d_cursor && fse_visible_ && staging_dirty &&
+            last_content_valid_ && renderer_.Staging()) {
+            POINT cp{};
+            if (GetCursorPos(&cp)) {
+                const RECT& r = last_content_rect_;
+                const float rw = static_cast<float>(r.right  - r.left);
+                const float rh = static_cast<float>(r.bottom - r.top);
+                if (rw > 0.0f && rh > 0.0f) {
+                    const float u = (cp.x - r.left) / rw;
+                    const float v = (cp.y - r.top)  / rh;
+                    if (u >= 0.0f && u <= 1.0f && v >= 0.0f && v <= 1.0f) {
+                        renderer_.DrawStereoCursor(u, v, settings_.cursor_parallax);
+                    }
+                }
+            }
         }
 
         // Present only when:

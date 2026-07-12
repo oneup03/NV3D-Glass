@@ -158,6 +158,15 @@ bool Renderer::RecreateDevice() {
     scale_rs_.Reset();
     scale_blend_.Reset();
     scaler_ready_ = false;
+    cursor_vs_.Reset();
+    cursor_ps_.Reset();
+    cursor_blend_.Reset();
+    cursor_rs_.Reset();
+    cursor_cb_.Reset();
+    cursor_tex_.Reset();
+    cursor_srv_.Reset();
+    cursor_samp_.Reset();
+    cursor_ready_ = false;
     swap_.Reset();
     ctx_.Reset();
     d3d_.Reset();
@@ -460,6 +469,224 @@ bool Renderer::ScaleCaptureToStaging(ID3D11Texture2D* src) {
 
     // Unbind so other pipelines (ImGui's compose pass, NV3DLib's import) don't
     // see leftover state.
+    ID3D11ShaderResourceView* null_srv[] = { nullptr };
+    ctx_->PSSetShaderResources(0, 1, null_srv);
+    ID3D11RenderTargetView* null_rtv[] = { nullptr };
+    ctx_->OMSetRenderTargets(1, null_rtv, nullptr);
+    return true;
+}
+
+namespace {
+
+// A vertexless quad (triangle strip, 4 verts) per eye that samples the baked
+// arrow bitmap. The constant buffer carries the quad's clip-space rectangle
+// (left/top/right/bottom); UVs span [0,1] so the arrow's top-left tip (its
+// hotspot) lands at the quad's top-left corner.
+constexpr const char* kCursorVS = R"(
+cbuffer CursorCB : register(b0) {
+    float4 rect;   // x = left, y = top, z = right, w = bottom (clip space)
+};
+struct VSOut { float4 pos : SV_Position; float2 uv : TEXCOORD0; };
+VSOut main(uint vid : SV_VertexID) {
+    float2 c = float2((vid & 1) ? 1.0 : 0.0, (vid & 2) ? 1.0 : 0.0);
+    VSOut o;
+    o.uv  = c;
+    o.pos = float4(lerp(rect.x, rect.z, c.x), lerp(rect.y, rect.w, c.y), 0.0, 1.0);
+    return o;
+}
+)";
+
+constexpr const char* kCursorPS = R"(
+Texture2D    g_cursor : register(t0);
+SamplerState g_smp    : register(s0);
+struct VSOut { float4 pos : SV_Position; float2 uv : TEXCOORD0; };
+float4 main(VSOut i) : SV_Target {
+    return g_cursor.Sample(g_smp, i.uv);
+}
+)";
+
+// Classic arrow pointer, 12x19, hotspot at the top-left tip (0,0). 'X' = black
+// outline, '.' = white fill, ' ' = transparent. Same silhouette Windows /
+// ImGui use for the default arrow so it reads as a normal mouse cursor.
+constexpr const char* kArrowRows[] = {
+    "X           ",
+    "XX          ",
+    "X.X         ",
+    "X..X        ",
+    "X...X       ",
+    "X....X      ",
+    "X.....X     ",
+    "X......X    ",
+    "X.......X   ",
+    "X........X  ",
+    "X.........X ",
+    "X......XXXXX",
+    "X...X..X    ",
+    "X..X X..X   ",
+    "X.X  X..X   ",
+    "XX    X..X  ",
+    "X      X..X ",
+    "        X..X",
+    "         XX ",
+};
+constexpr UINT kArrowW = 12;
+constexpr UINT kArrowH = 19;
+
+}  // anonymous
+
+bool Renderer::InitCursor() {
+    if (cursor_ready_) return true;
+    if (!d3d_)         return false;
+
+    ComPtr<ID3DBlob> vs_blob, ps_blob, errors;
+    if (FAILED(D3DCompile(kCursorVS, std::strlen(kCursorVS), nullptr, nullptr, nullptr,
+                          "main", "vs_5_0", 0, 0, &vs_blob, &errors))) return false;
+    if (FAILED(D3DCompile(kCursorPS, std::strlen(kCursorPS), nullptr, nullptr, nullptr,
+                          "main", "ps_5_0", 0, 0, &ps_blob, &errors))) return false;
+    if (FAILED(d3d_->CreateVertexShader(vs_blob->GetBufferPointer(), vs_blob->GetBufferSize(),
+                                        nullptr, &cursor_vs_))) return false;
+    if (FAILED(d3d_->CreatePixelShader(ps_blob->GetBufferPointer(), ps_blob->GetBufferSize(),
+                                       nullptr, &cursor_ps_))) return false;
+
+    D3D11_RASTERIZER_DESC rd{};
+    rd.FillMode        = D3D11_FILL_SOLID;
+    rd.CullMode        = D3D11_CULL_NONE;
+    rd.DepthClipEnable = TRUE;
+    if (FAILED(d3d_->CreateRasterizerState(&rd, &cursor_rs_))) return false;
+
+    // Standard straight-alpha over blend so the arrow composites onto the
+    // captured content. Transparent texels (alpha 0) don't touch the frame;
+    // white fill / black outline (alpha 1) overwrite it. Leave the staging
+    // alpha channel untouched (NV3DLib's D3D9 import ignores it, but don't
+    // gratuitously stomp it).
+    D3D11_BLEND_DESC bd{};
+    bd.RenderTarget[0].BlendEnable           = TRUE;
+    bd.RenderTarget[0].SrcBlend              = D3D11_BLEND_SRC_ALPHA;
+    bd.RenderTarget[0].DestBlend             = D3D11_BLEND_INV_SRC_ALPHA;
+    bd.RenderTarget[0].BlendOp               = D3D11_BLEND_OP_ADD;
+    bd.RenderTarget[0].SrcBlendAlpha         = D3D11_BLEND_ZERO;
+    bd.RenderTarget[0].DestBlendAlpha        = D3D11_BLEND_ONE;
+    bd.RenderTarget[0].BlendOpAlpha          = D3D11_BLEND_OP_ADD;
+    bd.RenderTarget[0].RenderTargetWriteMask =
+        D3D11_COLOR_WRITE_ENABLE_RED | D3D11_COLOR_WRITE_ENABLE_GREEN |
+        D3D11_COLOR_WRITE_ENABLE_BLUE;
+    if (FAILED(d3d_->CreateBlendState(&bd, &cursor_blend_))) return false;
+
+    D3D11_BUFFER_DESC cbd{};
+    cbd.ByteWidth      = 16;   // 1 * float4 (clip-space rect)
+    cbd.Usage          = D3D11_USAGE_DYNAMIC;
+    cbd.BindFlags      = D3D11_BIND_CONSTANT_BUFFER;
+    cbd.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+    if (FAILED(d3d_->CreateBuffer(&cbd, nullptr, &cursor_cb_))) return false;
+
+    // Bake the arrow ASCII art into a BGRA8 texture. Values are little-endian
+    // 0xAARRGGBB: black-opaque, white-opaque, fully transparent.
+    std::vector<uint32_t> px(static_cast<size_t>(kArrowW) * kArrowH, 0u);
+    for (UINT y = 0; y < kArrowH; ++y) {
+        for (UINT x = 0; x < kArrowW; ++x) {
+            const char ch = kArrowRows[y][x];
+            uint32_t   v  = 0x00000000u;         // transparent
+            if      (ch == 'X') v = 0xFF000000u; // black outline
+            else if (ch == '.') v = 0xFFFFFFFFu; // white fill
+            px[static_cast<size_t>(y) * kArrowW + x] = v;
+        }
+    }
+    D3D11_TEXTURE2D_DESC td{};
+    td.Width            = kArrowW;
+    td.Height           = kArrowH;
+    td.MipLevels        = 1;
+    td.ArraySize        = 1;
+    td.Format           = DXGI_FORMAT_B8G8R8A8_UNORM;
+    td.SampleDesc.Count = 1;
+    td.Usage            = D3D11_USAGE_IMMUTABLE;
+    td.BindFlags        = D3D11_BIND_SHADER_RESOURCE;
+    D3D11_SUBRESOURCE_DATA srd{};
+    srd.pSysMem     = px.data();
+    srd.SysMemPitch = kArrowW * 4u;
+    if (FAILED(d3d_->CreateTexture2D(&td, &srd, &cursor_tex_)))                 return false;
+    if (FAILED(d3d_->CreateShaderResourceView(cursor_tex_.Get(), nullptr, &cursor_srv_))) return false;
+
+    D3D11_SAMPLER_DESC sd{};
+    sd.Filter         = D3D11_FILTER_MIN_MAG_MIP_LINEAR;   // smooth edges when upscaled
+    sd.AddressU       = D3D11_TEXTURE_ADDRESS_CLAMP;
+    sd.AddressV       = D3D11_TEXTURE_ADDRESS_CLAMP;
+    sd.AddressW       = D3D11_TEXTURE_ADDRESS_CLAMP;
+    sd.ComparisonFunc = D3D11_COMPARISON_NEVER;
+    sd.MinLOD         = 0;
+    sd.MaxLOD         = D3D11_FLOAT32_MAX;
+    if (FAILED(d3d_->CreateSamplerState(&sd, &cursor_samp_))) return false;
+
+    cursor_ready_ = true;
+    return true;
+}
+
+bool Renderer::DrawStereoCursor(float u, float v, float parallax_frac) {
+    if (!InitCursor() || !ctx_ || staging_w_ == 0 || staging_h_ == 0) return false;
+    if (!staging_rtv_[staging_idx_]) return false;
+
+    const float W     = static_cast<float>(staging_w_);
+    const float H     = static_cast<float>(staging_h_);
+    const float halfW = W * 0.5f;
+    // Arrow size in staging pixels — proportional to staging height so it's a
+    // consistent visual size across source resolutions, clamped to a sane
+    // pointer size. Width follows the bitmap's aspect ratio.
+    float ch_px = H * 0.035f;
+    if (ch_px < 18.0f) ch_px = 18.0f;
+    if (ch_px > 48.0f) ch_px = 48.0f;
+    const float cw_px = ch_px * (static_cast<float>(kArrowW) / static_cast<float>(kArrowH));
+
+    ID3D11RenderTargetView* rtv = staging_rtv_[staging_idx_].Get();
+    ctx_->OMSetRenderTargets(1, &rtv, nullptr);
+
+    D3D11_VIEWPORT vp{};
+    vp.Width    = W;
+    vp.Height   = H;
+    vp.MinDepth = 0.0f;
+    vp.MaxDepth = 1.0f;
+    ctx_->RSSetViewports(1, &vp);
+    ctx_->RSSetState(cursor_rs_.Get());
+    const float bf[4] = { 0, 0, 0, 0 };
+    ctx_->OMSetBlendState(cursor_blend_.Get(), bf, 0xFFFFFFFF);
+    ctx_->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
+    ctx_->IASetInputLayout(nullptr);
+    ctx_->VSSetShader(cursor_vs_.Get(), nullptr, 0);
+    ctx_->PSSetShader(cursor_ps_.Get(), nullptr, 0);
+    ID3D11ShaderResourceView* srvs[]  = { cursor_srv_.Get() };
+    ID3D11SamplerState*       samps[] = { cursor_samp_.Get() };
+    ctx_->PSSetShaderResources(0, 1, srvs);
+    ctx_->PSSetSamplers(0, 1, samps);
+
+    // The arrow's hotspot is its top-left tip, so the quad's top-left corner
+    // sits exactly at the mouse position.
+    auto draw_eye = [&](float hotspot_x_px, float hotspot_y_px) {
+        const float x0 = hotspot_x_px;
+        const float y0 = hotspot_y_px;
+        const float x1 = hotspot_x_px + cw_px;
+        const float y1 = hotspot_y_px + ch_px;
+        float rect[4] = {
+            x0 / W * 2.0f - 1.0f,   // left  clip
+            1.0f - y0 / H * 2.0f,   // top   clip
+            x1 / W * 2.0f - 1.0f,   // right clip
+            1.0f - y1 / H * 2.0f,   // bottom clip
+        };
+        D3D11_MAPPED_SUBRESOURCE ms{};
+        if (FAILED(ctx_->Map(cursor_cb_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &ms))) return;
+        std::memcpy(ms.pData, rect, sizeof(rect));
+        ctx_->Unmap(cursor_cb_.Get(), 0);
+        ID3D11Buffer* cbs[] = { cursor_cb_.Get() };
+        ctx_->VSSetConstantBuffers(0, 1, cbs);
+        ctx_->Draw(4, 0);
+    };
+
+    // Split the eyes symmetrically around the convergence point so changing
+    // parallax pushes depth without sliding the cursor sideways.
+    const float py = v * H;
+    const float lx = (u - parallax_frac * 0.5f) * halfW;
+    const float rx = halfW + (u + parallax_frac * 0.5f) * halfW;
+    draw_eye(lx, py);
+    draw_eye(rx, py);
+
+    // Unbind so NV3DLib's import / ImGui's compose don't inherit our state.
     ID3D11ShaderResourceView* null_srv[] = { nullptr };
     ctx_->PSSetShaderResources(0, 1, null_srv);
     ID3D11RenderTargetView* null_rtv[] = { nullptr };

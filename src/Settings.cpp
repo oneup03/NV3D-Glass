@@ -62,6 +62,20 @@ void WriteInt(const wchar_t* key, int val, const wchar_t* path) {
     WritePrivateProfileStringW(kSection, key, buf, path);
 }
 
+float ReadFloat(const wchar_t* key, float def, const wchar_t* path) {
+    wchar_t defbuf[32];
+    _snwprintf_s(defbuf, _TRUNCATE, L"%g", def);
+    wchar_t buf[64]{};
+    GetPrivateProfileStringW(kSection, key, defbuf, buf, _countof(buf), path);
+    return static_cast<float>(_wtof(buf));
+}
+
+void WriteFloat(const wchar_t* key, float val, const wchar_t* path) {
+    wchar_t buf[32];
+    _snwprintf_s(buf, _TRUNCATE, L"%g", val);
+    WritePrivateProfileStringW(kSection, key, buf, path);
+}
+
 const wchar_t* SourceKindStr(SourceKind k) {
     switch (k) {
         case SourceKind::Window:  return L"window";
@@ -138,6 +152,9 @@ void LoadSettings(Settings& s, const wchar_t* path) {
     s.enable_lightboost  = ReadBool(L"enable_lightboost",  s.enable_lightboost,  path);
     s.enable_suppressor  = ReadBool(L"enable_suppressor",  s.enable_suppressor,  path);
     s.auto_reacquire     = ReadBool(L"auto_reacquire",     s.auto_reacquire,     path);
+    s.lock_cursor        = ReadBool (L"lock_cursor",       s.lock_cursor,        path);
+    s.draw_3d_cursor     = ReadBool (L"draw_3d_cursor",    s.draw_3d_cursor,     path);
+    s.cursor_parallax    = ReadFloat(L"cursor_parallax",   s.cursor_parallax,    path);
     s.panel_x            = ReadInt (L"panel_x",            s.panel_x,            path);
     s.panel_y            = ReadInt (L"panel_y",            s.panel_y,            path);
     s.panel_w            = ReadInt (L"panel_w",            s.panel_w,            path);
@@ -157,6 +174,9 @@ void SaveSettings(const Settings& s, const wchar_t* path) {
     WriteInt(L"enable_lightboost",   s.enable_lightboost ? 1 : 0,        path);
     WriteInt(L"enable_suppressor",   s.enable_suppressor ? 1 : 0,        path);
     WriteInt(L"auto_reacquire",      s.auto_reacquire    ? 1 : 0,        path);
+    WriteInt(L"lock_cursor",         s.lock_cursor       ? 1 : 0,        path);
+    WriteInt(L"draw_3d_cursor",      s.draw_3d_cursor    ? 1 : 0,        path);
+    WriteFloat(L"cursor_parallax",   s.cursor_parallax,                  path);
     WriteInt(L"panel_x",             s.panel_x,                          path);
     WriteInt(L"panel_y",             s.panel_y,                          path);
     WriteInt(L"panel_w",             s.panel_w,                          path);
