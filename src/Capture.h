@@ -41,6 +41,13 @@ public:
     static std::unique_ptr<CaptureWGC> CreateForWindow (ID3D11Device* dev, HWND hwnd);
     static std::unique_ptr<CaptureWGC> CreateForMonitor(ID3D11Device* dev, HMONITOR hmon);
 
+    // Whether Windows.Graphics.Capture is available on this OS at all. False on
+    // builds too old to carry WGC (pre-1803, some LTSC branches) where even
+    // GraphicsCaptureSession::IsSupported() throws on activation. Never throws —
+    // any exception is folded to false. Callers use this to distinguish
+    // "this machine can't do WGC" from "WGC refused this specific source".
+    static bool IsSupported();
+
     bool TryAcquire(ID3D11Texture2D** out, UINT* w, UINT* h, DXGI_FORMAT* fmt) override;
     bool IsLost() const override;
     void Stop() override;

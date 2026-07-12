@@ -17,6 +17,8 @@
 
 #include "Capture.h"
 
+#include "Logging.h"
+
 #include <Windows.h>
 #include <d3d11.h>
 #include <dxgi1_2.h>
@@ -112,16 +114,44 @@ bool BuildSession(CaptureWGC::Impl& impl, ID3D11Device* dev) {
 CaptureWGC::CaptureWGC()  = default;
 CaptureWGC::~CaptureWGC() { Stop(); }
 
+bool CaptureWGC::IsSupported() {
+    // GraphicsCaptureSession::IsSupported() activates the runtime class to
+    // answer. On a Windows build too old to carry WGC at all (pre-1803, some
+    // LTSC branches) that activation throws instead of returning false — which,
+    // uncaught, terminated the process. Fold any throw to "unsupported".
+    try {
+        return winrt::GraphicsCaptureSession::IsSupported();
+    } catch (...) {
+        return false;
+    }
+}
+
 std::unique_ptr<CaptureWGC> CaptureWGC::CreateForWindow(ID3D11Device* dev, HWND hwnd) {
     if (!dev || !hwnd || !IsWindow(hwnd)) return nullptr;
-    if (!winrt::GraphicsCaptureSession::IsSupported()) return nullptr;
+    if (!IsSupported()) return nullptr;
     auto out = std::make_unique<CaptureWGC>();
     out->impl_ = std::make_unique<Impl>();
-    auto factory = winrt::get_activation_factory<winrt::GraphicsCaptureItem, IGraphicsCaptureItemInterop>();
-    HRESULT hr = factory->CreateForWindow(
-        hwnd, winrt::guid_of<winrt::GraphicsCaptureItem>(), winrt::put_abi(out->impl_->item));
-    if (FAILED(hr) || !out->impl_->item) return nullptr;
-    if (!BuildSession(*out->impl_, dev))  return nullptr;
+    // get_activation_factory, the interop CreateForWindow, and BuildSession
+    // (via MakeWinRTDevice's .as<>()) can all throw winrt::hresult_error on an
+    // OS/driver that advertises WGC but can't actually stand up a session.
+    // Catch here so a refusal degrades to the caller's test-pattern fallback
+    // instead of unwinding out of Start() to std::terminate.
+    try {
+        auto factory = winrt::get_activation_factory<winrt::GraphicsCaptureItem, IGraphicsCaptureItemInterop>();
+        HRESULT hr = factory->CreateForWindow(
+            hwnd, winrt::guid_of<winrt::GraphicsCaptureItem>(), winrt::put_abi(out->impl_->item));
+        if (FAILED(hr) || !out->impl_->item) return nullptr;
+        if (!BuildSession(*out->impl_, dev))  return nullptr;
+    } catch (winrt::hresult_error const& e) {
+        Log(NV3D::LogLevel::Warning,
+            L"CaptureWGC::CreateForWindow: WGC threw hr=0x%08X (%s) — unavailable",
+            (unsigned)e.code(), e.message().c_str());
+        return nullptr;
+    } catch (...) {
+        Log(NV3D::LogLevel::Warning,
+            L"CaptureWGC::CreateForWindow: WGC threw unknown exception — unavailable");
+        return nullptr;
+    }
 
     // Compute the client area's position within the captured frame so callers
     // can crop out the title bar / borders / DWM shadow at staging-write time.
@@ -155,14 +185,27 @@ std::unique_ptr<CaptureWGC> CaptureWGC::CreateForWindow(ID3D11Device* dev, HWND 
 
 std::unique_ptr<CaptureWGC> CaptureWGC::CreateForMonitor(ID3D11Device* dev, HMONITOR hmon) {
     if (!dev || !hmon) return nullptr;
-    if (!winrt::GraphicsCaptureSession::IsSupported()) return nullptr;
+    if (!IsSupported()) return nullptr;
     auto out = std::make_unique<CaptureWGC>();
     out->impl_ = std::make_unique<Impl>();
-    auto factory = winrt::get_activation_factory<winrt::GraphicsCaptureItem, IGraphicsCaptureItemInterop>();
-    HRESULT hr = factory->CreateForMonitor(
-        hmon, winrt::guid_of<winrt::GraphicsCaptureItem>(), winrt::put_abi(out->impl_->item));
-    if (FAILED(hr) || !out->impl_->item) return nullptr;
-    if (!BuildSession(*out->impl_, dev))  return nullptr;
+    // Same throw surface as CreateForWindow — guard so the caller can fall
+    // through to CaptureDXGI / test pattern instead of terminating.
+    try {
+        auto factory = winrt::get_activation_factory<winrt::GraphicsCaptureItem, IGraphicsCaptureItemInterop>();
+        HRESULT hr = factory->CreateForMonitor(
+            hmon, winrt::guid_of<winrt::GraphicsCaptureItem>(), winrt::put_abi(out->impl_->item));
+        if (FAILED(hr) || !out->impl_->item) return nullptr;
+        if (!BuildSession(*out->impl_, dev))  return nullptr;
+    } catch (winrt::hresult_error const& e) {
+        Log(NV3D::LogLevel::Warning,
+            L"CaptureWGC::CreateForMonitor: WGC threw hr=0x%08X (%s) — unavailable",
+            (unsigned)e.code(), e.message().c_str());
+        return nullptr;
+    } catch (...) {
+        Log(NV3D::LogLevel::Warning,
+            L"CaptureWGC::CreateForMonitor: WGC threw unknown exception — unavailable");
+        return nullptr;
+    }
     return out;
 }
 

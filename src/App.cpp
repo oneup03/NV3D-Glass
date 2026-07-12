@@ -275,6 +275,12 @@ bool App::Start() {
 
     SourceKind kind{}; HWND src_hwnd{}; HMONITOR src_hmon{};
     ResolveCaptureTarget(&kind, &src_hwnd, &src_hmon);
+    // Checkpoint the capture-create region so a crash here is self-locating in
+    // the log: this line without a following "capture created" line pins the
+    // fault to WGC/DXGI/Katanga construction (see the truncated-log bug where
+    // the last line was App::Stop and nothing after).
+    Log(NV3D::LogLevel::Info,
+        L"App::Start  kind=%d hwnd=%p hmon=%p", (int)kind, (void*)src_hwnd, (void*)src_hmon);
 
     // Try to start the capture session FIRST so we can size the staging
     // texture to exactly what WGC will deliver. CopyResource on dim-match is
@@ -289,6 +295,9 @@ bool App::Start() {
     if (kind == SourceKind::Window) {
         if (!src_hwnd) {
             capture_warning = L"selected window not running — showing test pattern";
+        } else if (!CaptureWGC::IsSupported()) {
+            capture_warning = L"Windows Graphics Capture not available on this system "
+                              L"(needs Windows 10 build 1803+) — showing test pattern";
         } else {
             cap_ = CaptureWGC::CreateForWindow(renderer_.Device(), src_hwnd);
             if (!cap_) capture_warning = L"WGC refused this window — showing test pattern";
@@ -318,6 +327,11 @@ bool App::Start() {
         cap_ = CaptureKatanga::Create(renderer_.Device());
         if (!cap_) capture_warning = L"Katanga mapping setup failed — showing test pattern";
     }
+
+    Log(NV3D::LogLevel::Info,
+        L"App::Start  capture created cap_=%p — %s",
+        (void*)cap_.get(),
+        capture_warning.empty() ? L"ok" : capture_warning.c_str());
 
     UINT staging_w = 0, staging_h = 0;
     capture_src_region_ = RECT{0, 0, 0, 0};

@@ -38,9 +38,26 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int) {
     winrt::init_apartment(winrt::apartment_type::single_threaded);
 
     nv3dg::App app;
-    if (!app.Init(hInstance)) return 1;
-    const int rc = app.Run();
-    app.Shutdown();
+    int rc = 0;
+    // Last-resort handler. Nothing in the message loop (WndProc → App::Start →
+    // WGC) sat under a try/catch, so a thrown winrt::hresult_error unwound
+    // straight to std::terminate and the process vanished with no log line past
+    // the point of the throw. Catch-and-log here converts any future escape
+    // into a diagnosable Error line instead of a silent death; the specific WGC
+    // throw sites that caused this are now guarded at their source too.
+    try {
+        if (!app.Init(hInstance)) return 1;
+        rc = app.Run();
+        app.Shutdown();
+    } catch (winrt::hresult_error const& e) {
+        nv3dg::Log(NV3D::LogLevel::Error,
+                   L"main: FATAL uncaught winrt::hresult_error hr=0x%08X (%s)",
+                   static_cast<unsigned>(e.code()), e.message().c_str());
+        rc = 2;
+    } catch (...) {
+        nv3dg::Log(NV3D::LogLevel::Error, L"main: FATAL uncaught exception");
+        rc = 2;
+    }
 
     // Log file stays open here on purpose — App::Shutdown used to call
     // ShutdownFileLog() at the very end, which meant nothing past that point
