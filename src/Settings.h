@@ -48,6 +48,18 @@ struct Settings {
 
     bool         auto_reacquire = true;
 
+    // WGC (Window/Monitor) capture only delivers a frame per DWM composition
+    // pass, and DWM idles when our fullscreen popup occludes the source — which
+    // floors capture at our present/heartbeat rate (~4fps) whenever the mouse
+    // is still. When set, we keep DWM composing at half the display refresh via
+    // a net-zero SendInput jiggle (see App::PokeDwmToKeepCaptureAlive), which
+    // holds capture at the source rate hands-off. Default OFF: only some titles
+    // hit the idle floor, and the jiggle's synthetic input reaches the game
+    // through the click-through popup, so we don't want it on for games that
+    // don't need it — enable per-game when a source runs at ~4fps hands-off.
+    // No effect on Katanga (swapchain injection).
+    bool         force_full_capture_hz = false;
+
     // ---- Cursor lock / 3D cursor ----
     // Clip the mouse to the captured window/monitor while the 3D output is
     // showing (so mouse-look games don't let the pointer wander off onto the

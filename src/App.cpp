@@ -632,6 +632,87 @@ void App::ReleaseCursorClip() {
     }
 }
 
+void App::PokeDwmToKeepCaptureAlive() {
+    // Only WGC window/monitor capture is gated by DWM composition. Katanga
+    // (shared-texture DLL path) delivers producer frames independent of the
+    // compositor, and the test-pattern path animates on its own — neither
+    // needs (nor should get) synthetic input. Skip while the popup is hidden:
+    // capture is paused there anyway, and we must not inject input into
+    // whatever the user tabbed away to.
+    const bool wgc_capture =
+        cap_ && (settings_.source_kind == SourceKind::Window ||
+                 settings_.source_kind == SourceKind::Monitor);
+
+    if (state_ != AppState::Running || !wgc_capture || !fse_visible_ ||
+        !settings_.force_full_capture_hz) {
+        if (dwm_poke_active_) {
+            Log(NV3D::LogLevel::Info, L"App::PokeDwm  stop");
+            dwm_poke_active_ = false;
+        }
+        return;
+    }
+
+    const auto now = std::chrono::steady_clock::now();
+
+    // Measure the output monitor's refresh — never hardcode it. It can change
+    // under us (mode-set, LightBoost custom timing), so re-sample at most every
+    // 2s and cache between. If the query fails and we have no cached value yet,
+    // bail this tick and retry next one rather than assuming a rate.
+    if (dwm_refresh_hz_ == 0 ||
+        now - dwm_refresh_sample_ts_ >= std::chrono::seconds(2)) {
+        DEVMODEW dm{}; dm.dmSize = sizeof(dm);
+        if (EnumDisplaySettingsW(settings_.output_monitor_id.empty()
+                                     ? nullptr
+                                     : settings_.output_monitor_id.c_str(),
+                                 ENUM_CURRENT_SETTINGS, &dm) &&
+            dm.dmDisplayFrequency > 1) {
+            dwm_refresh_hz_ = dm.dmDisplayFrequency;
+            dwm_refresh_sample_ts_ = now;
+        }
+    }
+    if (dwm_refresh_hz_ == 0) return;   // couldn't measure yet — try next tick
+
+    // Half the display refresh: the source is 60fps SbS being converted to
+    // 120Hz frame-sequential, so one wake per source frame is all we need.
+    // At 120Hz that's ~60 wakes/sec (~16.6ms); deriving from the measured
+    // rate keeps it correct on 60/144/240Hz panels too.
+    const UINT wake_hz = dwm_refresh_hz_ / 2;
+    if (wake_hz == 0) return;
+    const auto interval = std::chrono::microseconds(1000000 / wake_hz);
+    if (now - last_dwm_poke_ts_ < interval) return;
+    last_dwm_poke_ts_ = now;
+
+    // A *zero*-delta move (dx=dy=0) is filtered by the OS before it reaches
+    // DWM — it changes nothing, so DWM never recomposites and WGC never samples
+    // the occluded game window. (That's exactly why the first zero-delta
+    // attempt left the floor at 4fps.) What a real mouse move does is change
+    // the cursor position, forcing a DWM composition pass — and that same pass
+    // pulls the game window's redirection surface into the WGC frame pool.
+    //
+    // Replicate that with a NET-ZERO jiggle: nudge +1px then immediately -1px
+    // in one atomic SendInput. Two genuine move events reach DWM, but the
+    // cursor lands exactly back where it started — no visible motion, nothing
+    // for ClipCursor to fight, and a raw-input game nets zero delta per poke.
+    INPUT in[2]{};
+    in[0].type       = INPUT_MOUSE;
+    in[0].mi.dx      = 1;
+    in[0].mi.dy      = 0;
+    in[0].mi.dwFlags = MOUSEEVENTF_MOVE;   // relative +1px
+    in[1].type       = INPUT_MOUSE;
+    in[1].mi.dx      = -1;
+    in[1].mi.dy      = 0;
+    in[1].mi.dwFlags = MOUSEEVENTF_MOVE;   // relative -1px, back to origin
+    SendInput(2, in, sizeof(INPUT));
+
+    if (!dwm_poke_active_) {
+        Log(NV3D::LogLevel::Info,
+            L"App::PokeDwm  start — net-zero jiggle wake @ %uHz (half of %uHz "
+            L"refresh) to break the WGC/DWM idle-capture floor",
+            wake_hz, dwm_refresh_hz_);
+        dwm_poke_active_ = true;
+    }
+}
+
 bool App::ComputeCaptureContentRect(RECT* out) const {
     if (!out) return false;
 
@@ -883,6 +964,10 @@ void App::Tick() {
     // state so a transition out of Running (Stop, source lost) frees the clip
     // on the next Tick even if an explicit teardown path was missed.
     UpdateCursorLock();
+
+    // Keep WGC capture from collapsing to the heartbeat rate when the mouse is
+    // idle. Self-gates on state / WGC source / fse_visible_ (see the method).
+    PokeDwmToKeepCaptureAlive();
 
     if (state_ == AppState::Running) {
         bool staging_dirty = false;

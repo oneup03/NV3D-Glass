@@ -152,6 +152,7 @@ void LoadSettings(Settings& s, const wchar_t* path) {
     s.enable_lightboost  = ReadBool(L"enable_lightboost",  s.enable_lightboost,  path);
     s.enable_suppressor  = ReadBool(L"enable_suppressor",  s.enable_suppressor,  path);
     s.auto_reacquire     = ReadBool(L"auto_reacquire",     s.auto_reacquire,     path);
+    s.force_full_capture_hz = ReadBool(L"force_full_capture_hz", s.force_full_capture_hz, path);
     s.lock_cursor        = ReadBool (L"lock_cursor",       s.lock_cursor,        path);
     s.draw_3d_cursor     = ReadBool (L"draw_3d_cursor",    s.draw_3d_cursor,     path);
     s.cursor_parallax    = ReadFloat(L"cursor_parallax",   s.cursor_parallax,    path);
@@ -174,6 +175,7 @@ void SaveSettings(const Settings& s, const wchar_t* path) {
     WriteInt(L"enable_lightboost",   s.enable_lightboost ? 1 : 0,        path);
     WriteInt(L"enable_suppressor",   s.enable_suppressor ? 1 : 0,        path);
     WriteInt(L"auto_reacquire",      s.auto_reacquire    ? 1 : 0,        path);
+    WriteInt(L"force_full_capture_hz", s.force_full_capture_hz ? 1 : 0,  path);
     WriteInt(L"lock_cursor",         s.lock_cursor       ? 1 : 0,        path);
     WriteInt(L"draw_3d_cursor",      s.draw_3d_cursor    ? 1 : 0,        path);
     WriteFloat(L"cursor_parallax",   s.cursor_parallax,                  path);

@@ -119,6 +119,18 @@ private:
     void   UpdateCursorLock();
     void   ReleaseCursorClip();
 
+    // WGC capture keep-awake. WGC hands us exactly one captured frame per DWM
+    // composition pass, and DWM only composites when something visible changes
+    // — but our fullscreen FSE popup occludes the captured window, so the only
+    // thing that ever wakes DWM is our own stereo present, which we gate on
+    // staging_dirty. That closes a feedback loop (present -> composite -> one
+    // WGC frame -> staging_dirty -> present) that settles at the heartbeat
+    // rate (~4fps) whenever the mouse is idle. This synthesizes the DWM wake a
+    // real mouse move would give, via a net-zero SendInput jiggle (+1/-1px), so
+    // capture stays live hands-off. Self-gates on state / WGC source /
+    // fse_visible_.
+    void   PokeDwmToKeepCaptureAlive();
+
     static LRESULT CALLBACK StaticWndProc(HWND, UINT, WPARAM, LPARAM);
 
     HINSTANCE                          hinstance_     = nullptr;
@@ -244,6 +256,17 @@ private:
     // device-wide GPU stall apart from a game-side hitch.
     std::chrono::steady_clock::time_point last_capture_frame_ts_{};
     bool                               producer_gap_logged_ = false;
+
+    // DWM keep-awake state (see PokeDwmToKeepCaptureAlive). last_dwm_poke_ts_
+    // throttles the zero-delta SendInput to half the display refresh;
+    // dwm_refresh_hz_ caches the output monitor's measured refresh (0 = not
+    // yet sampled — never hardcoded, re-sampled periodically to track
+    // mode-sets / LightBoost); dwm_poke_active_ edge-triggers the on/off log.
+    std::chrono::steady_clock::time_point last_dwm_poke_ts_{};
+    std::chrono::steady_clock::time_point dwm_refresh_sample_ts_{};
+    UINT                               dwm_refresh_hz_ = 0;
+    bool                               dwm_poke_active_ = false;
+
     std::wstring                       status_extra_;
 };
 

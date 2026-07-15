@@ -219,6 +219,21 @@ void Gui::DrawCaptureSourceSection(App& app) {
     if (ImGui::Button("Refresh sources")) RefreshSources();
     ImGui::SameLine();
     ImGui::Checkbox("Auto-reacquire on disconnect", &s.auto_reacquire);
+
+    // Only WGC window/monitor capture is gated by DWM composition; Katanga
+    // (swapchain injection) delivers frames independent of it, so the toggle
+    // is meaningless there.
+    if (s.source_kind == SourceKind::Window || s.source_kind == SourceKind::Monitor) {
+        ImGui::Checkbox("Force full capture Hz", &s.force_full_capture_hz);
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip(
+                "Keeps WGC capture at the source frame rate when the mouse is idle.\n"
+                "Without it, DWM stops compositing the occluded game and capture\n"
+                "drops to ~4fps until you move the mouse. Does this by nudging the\n"
+                "cursor +1/-1px (no net movement) at half the display refresh.\n"
+                "Disable only if a raw-input game shows camera shimmer.");
+        }
+    }
 }
 
 void Gui::DrawOutputSection(App& app) {
