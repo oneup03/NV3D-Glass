@@ -45,7 +45,7 @@ binary is self-contained — no installer.
 | Hotkey   | Action                                                      |
 |----------|-------------------------------------------------------------|
 | Ctrl+F8  | Show / hide the 3D Vision FSE window (also kills/spawns the focus watcher) |
-| Ctrl+F9  | Toggle eye-swap (reverses left/right; ~300 ms FSE blink while the presenter restarts) |
+| Ctrl+PgDn | Toggle eye-swap (reverses left/right; ~300 ms FSE blink while the presenter restarts) |
 
 Both are global — they fire even when the captured game has foreground.
 

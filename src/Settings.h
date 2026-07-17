@@ -90,7 +90,7 @@ struct Settings {
     float        cursor_parallax = 0.0f;
 
     // ---- Hotkeys (persisted) ----
-    HotkeyDef hk_eyeswap     { MOD_CONTROL, VK_F9 };
+    HotkeyDef hk_eyeswap     { MOD_CONTROL, VK_NEXT };  // Ctrl+PgDn (F9 has app conflicts)
     HotkeyDef hk_toggle_panel{ MOD_CONTROL | MOD_ALT, 'S' };
     HotkeyDef hk_toggle_fse  { MOD_CONTROL, VK_F8 };
     HotkeyDef hk_quit        { MOD_CONTROL | MOD_ALT, 'Q' };
