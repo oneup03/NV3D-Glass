@@ -1,0 +1,23 @@
+# GitHub Pages configuration for the NV3D-Glass project site.
+# The README is served as the homepage: GitHub Pages enables the
+# jekyll-readme-index plugin (uses README.md as index when no index file
+# exists) and jekyll-optional-front-matter (runs front-matter-less markdown
+# through the theme layout) by default, so no index.html and no front matter
+# are needed.
+title: NV3D-Glass
+description: >-
+  Capture a side-by-side stereo source and re-present it as true
+  frame-sequential NVIDIA 3D Vision output.
+theme: jekyll-theme-cayman
+
+# Keep the source tree out of the built site (faster builds, clean _site).
+exclude:
+  - src/
+  - external/
+  - tools/
+  - .vscode/
+  - .github/
+  - "*.sln"
+  - "*.vcxproj"
+  - "*.vcxproj.filters"
+  - LICENSE

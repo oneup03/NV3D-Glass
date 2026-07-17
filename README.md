@@ -23,7 +23,7 @@ captured app; runs as a standalone .exe with an ImGui control panel.
 ## Install
 
 Download the latest pre-release from the
-[Releases](../../releases) page, unzip, and run `NV3D-Glass.exe`. The
+[Releases](https://github.com/oneup03/NV3D-Glass/releases) page, unzip, and run `NV3D-Glass.exe`. The
 binary is self-contained — no installer.
 
 ## Quick start
