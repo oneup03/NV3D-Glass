@@ -220,18 +220,32 @@ void Gui::DrawCaptureSourceSection(App& app) {
     ImGui::SameLine();
     ImGui::Checkbox("Auto-reacquire on disconnect", &s.auto_reacquire);
 
-    // Only WGC window/monitor capture is gated by DWM composition; Katanga
-    // (swapchain injection) delivers frames independent of it, so the toggle
-    // is meaningless there.
-    if (s.source_kind == SourceKind::Window || s.source_kind == SourceKind::Monitor) {
-        ImGui::Checkbox("Force full capture Hz", &s.force_full_capture_hz);
+    // Applies to any real capture source (WGC window/monitor AND Katanga) —
+    // both floor when the mouse is idle and our popup occludes the game. Two
+    // wake methods so users can try whichever works on their machine/game (or
+    // both); each also opts the game out of Windows power throttling.
+    if (s.source_kind == SourceKind::Window  ||
+        s.source_kind == SourceKind::Monitor ||
+        s.source_kind == SourceKind::Katanga) {
+        ImGui::TextDisabled("Force full capture Hz (if idle capture floors):");
+        ImGui::Checkbox("Cursor jiggle", &s.force_full_capture_hz);
         if (ImGui::IsItemHovered()) {
             ImGui::SetTooltip(
-                "Keeps WGC capture at the source frame rate when the mouse is idle.\n"
-                "Without it, DWM stops compositing the occluded game and capture\n"
-                "drops to ~4fps until you move the mouse. Does this by nudging the\n"
-                "cursor +1/-1px (no net movement) at half the display refresh.\n"
-                "Disable only if a raw-input game shows camera shimmer.");
+                "Nudges the cursor +1/-1px (no net movement) every tick (~120Hz)\n"
+                "to force DWM to keep compositing the occluded game, so WGC keeps\n"
+                "delivering frames. Also opts the game out of Windows power\n"
+                "throttling. This is the one that fixes the WGC floor, but the\n"
+                "global cursor events can make a raw-input game's camera shimmer.");
+        }
+        ImGui::SameLine();
+        ImGui::Checkbox("Game poke", &s.force_capture_hz_postmsg);
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip(
+                "Posts a WM_MOUSEMOVE straight to the game window every tick\n"
+                "(~120Hz) to keep its render loop pumping, plus the power-throttle\n"
+                "opt-out. Gentler (no global cursor motion) and more portable\n"
+                "across machines, but only helps games that idle on lack of input\n"
+                "— not the WGC DWM-sampling floor.");
         }
     }
 }

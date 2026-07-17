@@ -119,17 +119,18 @@ private:
     void   UpdateCursorLock();
     void   ReleaseCursorClip();
 
-    // WGC capture keep-awake. WGC hands us exactly one captured frame per DWM
-    // composition pass, and DWM only composites when something visible changes
-    // — but our fullscreen FSE popup occludes the captured window, so the only
-    // thing that ever wakes DWM is our own stereo present, which we gate on
-    // staging_dirty. That closes a feedback loop (present -> composite -> one
-    // WGC frame -> staging_dirty -> present) that settles at the heartbeat
-    // rate (~4fps) whenever the mouse is idle. This synthesizes the DWM wake a
-    // real mouse move would give, via a net-zero SendInput jiggle (+1/-1px), so
-    // capture stays live hands-off. Self-gates on state / WGC source /
-    // fse_visible_.
-    void   PokeDwmToKeepCaptureAlive();
+    // Capture idle-floor mitigation. When the mouse is idle and our fullscreen
+    // popup occludes the game, both WGC and Katanga capture collapse to a few
+    // fps — WGC because DWM stops compositing the occluded source (its frame
+    // pool starves), Katanga because the OS/engine throttles the occluded
+    // game's own rendering (the shared texture stops updating). Drives the
+    // source hands-off every tick (~120Hz). Always opts the game process out of
+    // power throttling, then applies whichever of two opt-in wake methods the
+    // user enabled: force_full_capture_hz (net-zero SendInput cursor jiggle —
+    // forces DWM composition) and/or force_capture_hz_postmsg (targeted
+    // WM_MOUSEMOVE to the game window — keeps an input-driven loop pumping).
+    // Self-gates on state / WGC-or-Katanga source / fse_visible_.
+    void   DriveIdleCaptureHz();
 
     static LRESULT CALLBACK StaticWndProc(HWND, UINT, WPARAM, LPARAM);
 
@@ -257,15 +258,15 @@ private:
     std::chrono::steady_clock::time_point last_capture_frame_ts_{};
     bool                               producer_gap_logged_ = false;
 
-    // DWM keep-awake state (see PokeDwmToKeepCaptureAlive). last_dwm_poke_ts_
-    // throttles the zero-delta SendInput to half the display refresh;
-    // dwm_refresh_hz_ caches the output monitor's measured refresh (0 = not
-    // yet sampled — never hardcoded, re-sampled periodically to track
-    // mode-sets / LightBoost); dwm_poke_active_ edge-triggers the on/off log.
-    std::chrono::steady_clock::time_point last_dwm_poke_ts_{};
-    std::chrono::steady_clock::time_point dwm_refresh_sample_ts_{};
-    UINT                               dwm_refresh_hz_ = 0;
+    // Idle-capture-drive state (see DriveIdleCaptureHz). The wake fires every
+    // tick (~120Hz), so there's no rate-throttle timestamp. dwm_poke_active_
+    // edge-triggers the on/off log. game_process_tweaked_pid_ is the pid we've
+    // applied the power-throttle opt-out to (one-shot per process);
+    // cached_game_hwnd_ is that game's resolved top-level window for the
+    // targeted WM_MOUSEMOVE. Both reset on Stop and on a pid change.
     bool                               dwm_poke_active_ = false;
+    DWORD                              game_process_tweaked_pid_ = 0;
+    HWND                               cached_game_hwnd_ = nullptr;
 
     std::wstring                       status_extra_;
 };

@@ -48,17 +48,29 @@ struct Settings {
 
     bool         auto_reacquire = true;
 
-    // WGC (Window/Monitor) capture only delivers a frame per DWM composition
-    // pass, and DWM idles when our fullscreen popup occludes the source — which
-    // floors capture at our present/heartbeat rate (~4fps) whenever the mouse
-    // is still. When set, we keep DWM composing at half the display refresh via
-    // a net-zero SendInput jiggle (see App::PokeDwmToKeepCaptureAlive), which
-    // holds capture at the source rate hands-off. Default OFF: only some titles
-    // hit the idle floor, and the jiggle's synthetic input reaches the game
-    // through the click-through popup, so we don't want it on for games that
-    // don't need it — enable per-game when a source runs at ~4fps hands-off.
-    // No effect on Katanga (swapchain injection).
-    bool         force_full_capture_hz = false;
+    // Both WGC (Window/Monitor) and Katanga capture collapse to a few fps when
+    // the mouse is idle and our fullscreen popup occludes the game — WGC because
+    // DWM stops compositing the occluded source, and/or because the OS/engine
+    // throttles the occluded game's own rendering. App::DriveIdleCaptureHz
+    // counters this hands-off at a fixed ~120Hz (every tick, regardless of
+    // display refresh). Whenever EITHER wake method below is on it also opts the
+    // game process out of power throttling (side-effect-free), then applies the
+    // chosen method(s). Both default OFF: only some titles hit the floor and the
+    // synthetic input reaches the game through the click-through popup, so it's
+    // opt-in per game — enable one (or both) when a source runs at a few fps
+    // hands-off. Two methods because which one works varies by machine/game:
+    //   force_full_capture_hz    — net-zero SendInput cursor jiggle (+1/-1px).
+    //                              Forces DWM composition, so it's the one that
+    //                              fixes the WGC floor; but the global cursor
+    //                              events can make a raw-input game's camera
+    //                              shimmer.
+    //   force_capture_hz_postmsg — targeted WM_MOUSEMOVE posted straight to the
+    //                              game window. Gentler (no global cursor
+    //                              motion) and more portable across machines,
+    //                              but only helps an input/message-driven engine,
+    //                              not the WGC DWM-sampling floor.
+    bool         force_full_capture_hz    = false;
+    bool         force_capture_hz_postmsg = false;
 
     // ---- Cursor lock / 3D cursor ----
     // Clip the mouse to the captured window/monitor while the 3D output is

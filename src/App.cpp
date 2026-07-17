@@ -33,6 +33,25 @@
 #include <chrono>
 #include <thread>
 
+// PROCESS_POWER_THROTTLING_STATE (used by DriveIdleCaptureHz to opt the game
+// out of Win11 EcoQoS execution throttling) is only declared by the SDK when
+// NTDDI_VERSION >= NTDDI_WIN10_RS1. This project targets the 10.0 SDK but
+// doesn't pin NTDDI_VERSION, so it defaults to NTDDI_WIN10 — one notch below
+// that gate — and the struct/macros are absent. The runtime API exists on
+// Windows 10 1607+ regardless (SetProcessInformation is Win8+, and the
+// ProcessPowerThrottling enumerator is unconditionally present in the Win8+
+// PROCESS_INFORMATION_CLASS enum), so declare just what we need when the SDK
+// headers didn't. Guarded on the macro so a future NTDDI bump is a no-op.
+#ifndef PROCESS_POWER_THROTTLING_CURRENT_VERSION
+#define PROCESS_POWER_THROTTLING_CURRENT_VERSION 1
+#define PROCESS_POWER_THROTTLING_EXECUTION_SPEED 0x1
+typedef struct _PROCESS_POWER_THROTTLING_STATE {
+    ULONG Version;
+    ULONG ControlMask;
+    ULONG StateMask;
+} PROCESS_POWER_THROTTLING_STATE;
+#endif
+
 // ImGui's Win32 backend intentionally hides this declaration behind `#if 0`
 // (see imgui_impl_win32.h:34-36) so the header doesn't pull in <windows.h>.
 // The backend's documentation tells consumers to forward-declare it manually.
@@ -520,6 +539,11 @@ void App::Stop() {
     if (state_ == AppState::Running) state_ = AppState::Idle;
     producer_death_stop_at_ = {};
     tracked_pid_ = 0;
+    // Reset idle-drive per-game state so the next session re-applies the
+    // power-throttle opt-out and re-resolves the game window (the opt-out itself
+    // dies with the game process, so there's nothing to restore here).
+    game_process_tweaked_pid_ = 0;
+    cached_game_hwnd_ = nullptr;
     if (tracked_process_handle_) {
         CloseHandle(tracked_process_handle_);
         tracked_process_handle_ = nullptr;
@@ -632,83 +656,138 @@ void App::ReleaseCursorClip() {
     }
 }
 
-void App::PokeDwmToKeepCaptureAlive() {
-    // Only WGC window/monitor capture is gated by DWM composition. Katanga
-    // (shared-texture DLL path) delivers producer frames independent of the
-    // compositor, and the test-pattern path animates on its own — neither
-    // needs (nor should get) synthetic input. Skip while the popup is hidden:
-    // capture is paused there anyway, and we must not inject input into
+void App::DriveIdleCaptureHz() {
+    // Both WGC (Window/Monitor) AND Katanga capture floor to a few fps when the
+    // mouse is idle and our fullscreen popup occludes the game — but for two
+    // different reasons, so we attack both:
+    //   * WGC: DWM stops compositing the occluded source, so its frame pool
+    //     starves. Fixed by forcing DWM composition (the cursor jiggle).
+    //   * Katanga: the OS / engine throttles the occluded game's OWN rendering,
+    //     so the shared texture stops updating. WGC can hit this too. Fixed by
+    //     opting the game process out of power throttling + keeping its input /
+    //     message loop alive.
+    // Opt-in via two independent toggles: force_full_capture_hz (cursor jiggle)
+    // and force_capture_hz_postmsg (targeted game WM_MOUSEMOVE). Skip while the
+    // popup is hidden: capture is paused there and we must not inject input into
     // whatever the user tabbed away to.
-    const bool wgc_capture =
-        cap_ && (settings_.source_kind == SourceKind::Window ||
-                 settings_.source_kind == SourceKind::Monitor);
+    const bool capture_active =
+        cap_ && (settings_.source_kind == SourceKind::Window  ||
+                 settings_.source_kind == SourceKind::Monitor ||
+                 settings_.source_kind == SourceKind::Katanga);
 
-    if (state_ != AppState::Running || !wgc_capture || !fse_visible_ ||
-        !settings_.force_full_capture_hz) {
+    // Two independent wake methods (see Settings) — users pick whichever works
+    // on their machine/game, or both. The power-throttle opt-out below applies
+    // whenever either is on.
+    const bool jiggle_on = settings_.force_full_capture_hz;
+    const bool msg_on    = settings_.force_capture_hz_postmsg;
+
+    if (state_ != AppState::Running || !capture_active || !fse_visible_ ||
+        !(jiggle_on || msg_on)) {
         if (dwm_poke_active_) {
-            Log(NV3D::LogLevel::Info, L"App::PokeDwm  stop");
+            Log(NV3D::LogLevel::Info, L"App::DriveIdleCaptureHz  stop");
             dwm_poke_active_ = false;
         }
         return;
     }
 
-    const auto now = std::chrono::steady_clock::now();
+    const DWORD game_pid  = tracked_pid_;
+    const bool  have_game = (game_pid != 0 && game_pid != GetCurrentProcessId());
 
-    // Measure the output monitor's refresh — never hardcode it. It can change
-    // under us (mode-set, LightBoost custom timing), so re-sample at most every
-    // 2s and cache between. If the query fails and we have no cached value yet,
-    // bail this tick and retry next one rather than assuming a rate.
-    if (dwm_refresh_hz_ == 0 ||
-        now - dwm_refresh_sample_ts_ >= std::chrono::seconds(2)) {
-        DEVMODEW dm{}; dm.dmSize = sizeof(dm);
-        if (EnumDisplaySettingsW(settings_.output_monitor_id.empty()
-                                     ? nullptr
-                                     : settings_.output_monitor_id.c_str(),
-                                 ENUM_CURRENT_SETTINGS, &dm) &&
-            dm.dmDisplayFrequency > 1) {
-            dwm_refresh_hz_ = dm.dmDisplayFrequency;
-            dwm_refresh_sample_ts_ = now;
+    // (1) One-shot per game process: opt it out of execution-speed power
+    // throttling. Win11 EcoQoS throttles a fully-occluded process's CPU/GPU
+    // frequency, which starves the game's render loop system-wide — hits both
+    // WGC and Katanga — and is machine-dependent (Win11 vs 10, hardware), the
+    // likeliest reason a fix that works on one PC fails on another. It's
+    // side-effect-free and reverts when the game exits, so we never restore it.
+    // Done once per game pid (both the opt-out and the HWND resolve, so we
+    // never run EnumWindows at tick rate). cached_game_hwnd_ may stay null if
+    // the window can't be found — the targeted wake below just no-ops then.
+    if (have_game && game_pid != game_process_tweaked_pid_) {
+        game_process_tweaked_pid_ = game_pid;
+        if (HANDLE hp = OpenProcess(PROCESS_SET_INFORMATION, FALSE, game_pid)) {
+            PROCESS_POWER_THROTTLING_STATE pts{};
+            pts.Version     = PROCESS_POWER_THROTTLING_CURRENT_VERSION;
+            pts.ControlMask = PROCESS_POWER_THROTTLING_EXECUTION_SPEED;
+            pts.StateMask   = 0;   // 0 under the control bit = opt OUT of throttling
+            const BOOL ok = SetProcessInformation(
+                hp, ProcessPowerThrottling, &pts, sizeof(pts));
+            Log(NV3D::LogLevel::Info,
+                L"App::DriveIdleCaptureHz  power-throttle opt-out pid=%lu -> %s",
+                (unsigned long)game_pid, ok ? L"ok" : L"failed");
+            CloseHandle(hp);
+        } else {
+            Log(NV3D::LogLevel::Warning,
+                L"App::DriveIdleCaptureHz  OpenProcess(SET_INFORMATION pid=%lu) "
+                L"failed err=%lu — power-throttle opt-out skipped",
+                (unsigned long)game_pid, GetLastError());
+        }
+
+        struct Ctx { DWORD pid; HWND result; } ctx{ game_pid, nullptr };
+        EnumWindows([](HWND h, LPARAM lp) -> BOOL {
+            auto* c = reinterpret_cast<Ctx*>(lp);
+            DWORD pid = 0;
+            GetWindowThreadProcessId(h, &pid);
+            if (pid == c->pid && IsWindowVisible(h) && GetWindowTextLengthW(h) > 0) {
+                c->result = h;
+                return FALSE;
+            }
+            return TRUE;
+        }, reinterpret_cast<LPARAM>(&ctx));
+        cached_game_hwnd_ = ctx.result;
+    }
+
+    // Wake EVERY tick. The main loop ticks at ~125Hz (App::Run's 8ms cadence),
+    // so poking each tick drives the source at ~120Hz — the full 120Hz
+    // frame-sequential output rate — INDEPENDENT of the panel's reported
+    // refresh. Deliberately fixed rather than derived from DEVMODE: LightBoost
+    // custom timings / mode-sets can make the reported refresh unreliable, and
+    // a fixed 8.33ms (120Hz) interval gate would alias against the 8ms tick
+    // down to ~62Hz anyway. SendInput / PostMessage are cheap enough per tick.
+
+    // (2) Net-zero cursor jiggle (force_full_capture_hz). A *zero*-delta move
+    // (dx=dy=0) is filtered by the OS before it reaches DWM, so it does nothing
+    // (that's why the first attempt left the floor at 4fps). A real move forces
+    // a DWM composition pass, which pulls the occluded window's redirection
+    // surface into the WGC frame pool. Nudge +1px then -1px in one atomic
+    // SendInput: two genuine events reach DWM, cursor lands exactly back at
+    // origin — no visible motion, nothing for ClipCursor to fight, raw-input
+    // game nets zero.
+    if (jiggle_on) {
+        INPUT in[2]{};
+        in[0].type       = INPUT_MOUSE;
+        in[0].mi.dx      = 1;
+        in[0].mi.dy      = 0;
+        in[0].mi.dwFlags = MOUSEEVENTF_MOVE;   // relative +1px
+        in[1].type       = INPUT_MOUSE;
+        in[1].mi.dx      = -1;
+        in[1].mi.dy      = 0;
+        in[1].mi.dwFlags = MOUSEEVENTF_MOVE;   // relative -1px, back to origin
+        SendInput(2, in, sizeof(INPUT));
+    }
+
+    // (3) Targeted wake (force_capture_hz_postmsg): post a same-position
+    // WM_MOUSEMOVE straight to the game window. Unlike the global jiggle this
+    // doesn't depend on cursor position, focus, or DWM (which is why it's more
+    // portable across machines) — it keeps an input/message-driven engine's
+    // loop pumping even while occluded. Same position as the real cursor, so it
+    // perturbs nothing the game reads.
+    if (msg_on && cached_game_hwnd_ && IsWindow(cached_game_hwnd_)) {
+        POINT cp{};
+        if (GetCursorPos(&cp)) {
+            POINT cl = cp;
+            ScreenToClient(cached_game_hwnd_, &cl);
+            PostMessageW(cached_game_hwnd_, WM_MOUSEMOVE, 0,
+                         MAKELPARAM(cl.x, cl.y));
         }
     }
-    if (dwm_refresh_hz_ == 0) return;   // couldn't measure yet — try next tick
-
-    // Half the display refresh: the source is 60fps SbS being converted to
-    // 120Hz frame-sequential, so one wake per source frame is all we need.
-    // At 120Hz that's ~60 wakes/sec (~16.6ms); deriving from the measured
-    // rate keeps it correct on 60/144/240Hz panels too.
-    const UINT wake_hz = dwm_refresh_hz_ / 2;
-    if (wake_hz == 0) return;
-    const auto interval = std::chrono::microseconds(1000000 / wake_hz);
-    if (now - last_dwm_poke_ts_ < interval) return;
-    last_dwm_poke_ts_ = now;
-
-    // A *zero*-delta move (dx=dy=0) is filtered by the OS before it reaches
-    // DWM — it changes nothing, so DWM never recomposites and WGC never samples
-    // the occluded game window. (That's exactly why the first zero-delta
-    // attempt left the floor at 4fps.) What a real mouse move does is change
-    // the cursor position, forcing a DWM composition pass — and that same pass
-    // pulls the game window's redirection surface into the WGC frame pool.
-    //
-    // Replicate that with a NET-ZERO jiggle: nudge +1px then immediately -1px
-    // in one atomic SendInput. Two genuine move events reach DWM, but the
-    // cursor lands exactly back where it started — no visible motion, nothing
-    // for ClipCursor to fight, and a raw-input game nets zero delta per poke.
-    INPUT in[2]{};
-    in[0].type       = INPUT_MOUSE;
-    in[0].mi.dx      = 1;
-    in[0].mi.dy      = 0;
-    in[0].mi.dwFlags = MOUSEEVENTF_MOVE;   // relative +1px
-    in[1].type       = INPUT_MOUSE;
-    in[1].mi.dx      = -1;
-    in[1].mi.dy      = 0;
-    in[1].mi.dwFlags = MOUSEEVENTF_MOVE;   // relative -1px, back to origin
-    SendInput(2, in, sizeof(INPUT));
 
     if (!dwm_poke_active_) {
         Log(NV3D::LogLevel::Info,
-            L"App::PokeDwm  start — net-zero jiggle wake @ %uHz (half of %uHz "
-            L"refresh) to break the WGC/DWM idle-capture floor",
-            wake_hz, dwm_refresh_hz_);
+            L"App::DriveIdleCaptureHz  start — every tick (~120Hz): "
+            L"power-throttle opt-out%s%s (game_hwnd=%p)",
+            jiggle_on ? L" + cursor jiggle" : L"",
+            msg_on    ? L" + game WM_MOUSEMOVE" : L"",
+            (void*)cached_game_hwnd_);
         dwm_poke_active_ = true;
     }
 }
@@ -965,9 +1044,10 @@ void App::Tick() {
     // on the next Tick even if an explicit teardown path was missed.
     UpdateCursorLock();
 
-    // Keep WGC capture from collapsing to the heartbeat rate when the mouse is
-    // idle. Self-gates on state / WGC source / fse_visible_ (see the method).
-    PokeDwmToKeepCaptureAlive();
+    // Keep capture from collapsing to a few fps when the mouse is idle (WGC
+    // DWM-composition floor + occluded-game throttle). Self-gates on state /
+    // source / fse_visible_ / the two force-capture-Hz toggles (see the method).
+    DriveIdleCaptureHz();
 
     if (state_ == AppState::Running) {
         bool staging_dirty = false;
