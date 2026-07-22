@@ -29,7 +29,7 @@ namespace nv3dg {
 // into a Direct3D11CaptureFramePool the main thread polls with TryGetNextFrame.
 // No dependence on the source app's renderer; works for any visible window or
 // monitor on Windows 10 1903+. Falls short for some exclusive-fullscreen games
-// — those need CaptureDXGI.
+// - those need CaptureDXGI.
 class CaptureWGC : public ICaptureSource {
 public:
     CaptureWGC();
@@ -52,7 +52,7 @@ public:
     bool IsLost() const override;
     void Stop() override;
 
-    // Dimensions WGC will deliver for the captured item — known at session
+    // Dimensions WGC will deliver for the captured item - known at session
     // construction time (item.Size()). Callers use this to size their staging
     // texture exactly so CopyResource hits the fast path instead of falling
     // through to a scaler shader pass on every frame.
@@ -60,7 +60,7 @@ public:
     UINT InitialHeight() const;
 
     // For a window source, the sub-rect of the captured frame that
-    // corresponds to the window's client area — i.e. excluding the title
+    // corresponds to the window's client area - i.e. excluding the title
     // bar, borders, and the invisible DWM shadow. Returns the full frame
     // rect for monitor sources / when client-area detection fails. Callers
     // use this to crop the title bar out of the stereo output via

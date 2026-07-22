@@ -39,7 +39,7 @@ public:
 
     // Tear down all D3D11 state (device, context, swap chain, scaler shaders,
     // ImGui DX11 backend) and rebuild it from scratch. Called when we detect
-    // DXGI_ERROR_DEVICE_REMOVED — the existing device is dead, the swap
+    // DXGI_ERROR_DEVICE_REMOVED - the existing device is dead, the swap
     // chain backbuffer renders nothing (the control panel goes white), and
     // ImGui's cached resources point at a removed device. After RecreateDevice
     // the panel paints again and the next Start() builds a fresh capture
@@ -62,7 +62,7 @@ public:
     // KMT shared handle, which has ZERO implicit cross-API synchronization.
     // With a single staging, tick N+1's CopyResource/scaler-draw overwrites
     // the very allocation the D3D9 StretchRect for tick N may still be
-    // reading — a permanent write/read race on the exact driver path that
+    // reading - a permanent write/read race on the exact driver path that
     // is fragile. Each new frame is written into the NEXT ring slot instead;
     // Staging() returns the last-written slot (what should be presented).
     // Ring depth 3 (not 2): if NV3DLib's worker drops a frame, a 2-deep ring
@@ -98,14 +98,14 @@ public:
     // Fill staging with the DX11Sample-style stereo test pattern (red+quad in
     // the left eye half, green+quad in the right; a parallax-shifted white
     // square between them so stereo fusion is obvious under shutter glasses).
-    // `frame` is the animation counter — pass 0 for a static frame, or
+    // `frame` is the animation counter - pass 0 for a static frame, or
     // increment per tick to animate.
     void             FillTestPattern(uint32_t frame);
     void             ReleaseStaging();
 
     // Drop the cached scaler SRV (and its reference to the last scaler
     // source). MUST be called whenever the capture source's shared texture
-    // is being released deliberately — e.g. CaptureKatanga::ReleaseSharedHold
+    // is being released deliberately - e.g. CaptureKatanga::ReleaseSharedHold
     // before an FSE minimize, or ResetForReconnect on producer loss. The SRV
     // holds the cross-process allocation open on our device; keeping it
     // across the SW_MINIMIZE stereo-teardown defeats the entire point of
@@ -138,7 +138,7 @@ private:
     UINT                                            swap_h_     = 0;
     bool                                            imgui_init_ = false;
 
-    // GPU scaler pipeline — compiled on first call, shared across calls.
+    // GPU scaler pipeline - compiled on first call, shared across calls.
     bool InitScaler();
     bool ScaleCaptureToStaging(ID3D11Texture2D* src);
     Microsoft::WRL::ComPtr<ID3D11VertexShader>      scale_vs_;
@@ -147,7 +147,7 @@ private:
     Microsoft::WRL::ComPtr<ID3D11RasterizerState>   scale_rs_;
     Microsoft::WRL::ComPtr<ID3D11BlendState>        scale_blend_;
     bool                                            scaler_ready_ = false;
-    // Cached SRV onto the last scaler source — Katanga's cross-process
+    // Cached SRV onto the last scaler source - Katanga's cross-process
     // shared texture stays at the same pointer for many frames, so
     // re-creating an SRV every call burns 100+ create/release cycles per
     // second against shared GPU memory. Cache by source pointer identity;
@@ -156,7 +156,7 @@ private:
     ID3D11Texture2D*                                scale_cached_src_ = nullptr;
     DXGI_FORMAT                                     scale_cached_fmt_ = DXGI_FORMAT_UNKNOWN;
 
-    // Stereo-cursor pipeline — compiled on first DrawStereoCursor call. A
+    // Stereo-cursor pipeline - compiled on first DrawStereoCursor call. A
     // vertexless quad (SV_VertexID) per eye samples a small baked arrow bitmap
     // (white fill + black outline, straight alpha) so the 3D cursor reads as a
     // normal mouse pointer. The dynamic constant buffer holds the quad's clip-

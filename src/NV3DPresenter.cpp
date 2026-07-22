@@ -31,7 +31,7 @@ namespace {
 // (a) verify the popup actually got the click-through ex-styles after Init,
 // and (b) re-assert them ourselves if for some reason NV3DLib didn't (the
 // only path that skips ApplyClickThrough is the windowed-fallback when
-// CreateDeviceEx FSE refuses — see d3d9_presenter.cpp:261-272).
+// CreateDeviceEx FSE refuses - see d3d9_presenter.cpp:261-272).
 constexpr const wchar_t* kNV3DLibClass = L"NV3DLib_PresentWindow";
 
 HWND FindNV3DLibFseWindow() {
@@ -42,7 +42,7 @@ void DiagnoseClickThrough() {
     HWND hwnd = FindNV3DLibFseWindow();
     if (!hwnd) {
         Log(NV3D::LogLevel::Warning,
-            L"NV3DPresenter: could not locate NV3DLib FSE window (class=%s) — "
+            L"NV3DPresenter: could not locate NV3DLib FSE window (class=%s) - "
             L"NV3DLib never created it, or it's on a different desktop",
             kNV3DLibClass);
         return;
@@ -139,7 +139,7 @@ void NV3DPresenter::SetEyeSwap(bool enable) {
 void NV3DPresenter::NotifyDeviceLost() {
     if (iface_) {
         Log(NV3D::LogLevel::Warning,
-            L"NV3DPresenter: NotifyDeviceLost — next Shutdown takes the dead-device path");
+            L"NV3DPresenter: NotifyDeviceLost - next Shutdown takes the dead-device path");
         iface_->NotifyDeviceLost();
     }
 }

@@ -3,7 +3,7 @@
     Build NV3D-Glass.sln from PowerShell without needing a Developer Command
     Prompt. Used by .vscode/tasks.json and convenient for the command line.
 
-    msbuild.exe is not on PATH in a normal PowerShell session — it ships
+    msbuild.exe is not on PATH in a normal PowerShell session - it ships
     inside the VS 2022 install tree. This script locates it via vswhere
     (the same pattern external/NV3D-Lib/tools/build.ps1 uses for the
     submodule), then runs the build.

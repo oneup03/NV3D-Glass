@@ -34,7 +34,7 @@ struct HotkeyDef {
 struct Settings {
     // ---- 3D Vision output / NV3DPresenter init params ----
     HMONITOR     target_monitor    = nullptr;  // null = auto (let NV3DLib pick primary 3DVision display)
-    std::wstring output_monitor_id;             // "\\.\DISPLAY1" — for persistence; resolves to HMONITOR at startup
+    std::wstring output_monitor_id;             // "\\.\DISPLAY1" - for persistence; resolves to HMONITOR at startup
     bool         eye_swap          = false;
     bool         on_top            = true;
     bool         enable_lightboost = true;
@@ -49,7 +49,7 @@ struct Settings {
     bool         auto_reacquire = true;
 
     // Both WGC (Window/Monitor) and Katanga capture collapse to a few fps when
-    // the mouse is idle and our fullscreen popup occludes the game — WGC because
+    // the mouse is idle and our fullscreen popup occludes the game - WGC because
     // DWM stops compositing the occluded source, and/or because the OS/engine
     // throttles the occluded game's own rendering. App::DriveIdleCaptureHz
     // counters this hands-off at a fixed ~120Hz (every tick, regardless of
@@ -57,14 +57,14 @@ struct Settings {
     // game process out of power throttling (side-effect-free), then applies the
     // chosen method(s). Both default OFF: only some titles hit the floor and the
     // synthetic input reaches the game through the click-through popup, so it's
-    // opt-in per game — enable one (or both) when a source runs at a few fps
+    // opt-in per game - enable one (or both) when a source runs at a few fps
     // hands-off. Two methods because which one works varies by machine/game:
-    //   force_full_capture_hz    — net-zero SendInput cursor jiggle (+1/-1px).
+    //   force_full_capture_hz    - net-zero SendInput cursor jiggle (+1/-1px).
     //                              Forces DWM composition, so it's the one that
     //                              fixes the WGC floor; but the global cursor
     //                              events can make a raw-input game's camera
     //                              shimmer.
-    //   force_capture_hz_postmsg — targeted WM_MOUSEMOVE posted straight to the
+    //   force_capture_hz_postmsg - targeted WM_MOUSEMOVE posted straight to the
     //                              game window. Gentler (no global cursor
     //                              motion) and more portable across machines,
     //                              but only helps an input/message-driven engine,
@@ -86,11 +86,11 @@ struct Settings {
     bool         draw_3d_cursor = false;
     // Right/left-eye horizontal split for the 3D cursor as a fraction of the
     // per-eye width. 0 = screen plane. Small +/- values push the reticle
-    // behind / in front of the screen. Kept tiny — a few % is a lot of depth.
+    // behind / in front of the screen. Kept tiny - a few % is a lot of depth.
     float        cursor_parallax = 0.0f;
 
     // ---- Hotkeys (persisted) ----
-    HotkeyDef hk_eyeswap     { MOD_CONTROL, VK_NEXT };  // Ctrl+PgDn (F9 has app conflicts)
+    HotkeyDef hk_eyeswap     { MOD_SHIFT, VK_F8 };
     HotkeyDef hk_toggle_panel{ MOD_CONTROL | MOD_ALT, 'S' };
     HotkeyDef hk_toggle_fse  { MOD_CONTROL, VK_F8 };
     HotkeyDef hk_quit        { MOD_CONTROL | MOD_ALT, 'Q' };

@@ -121,7 +121,7 @@ void DrainGpu(ID3D11Device* dev) {
         Sleep(1);
     }
     Log(NV3D::LogLevel::Warning,
-        L"CaptureKatanga: DrainGpu timeout after 100ms — proceeding anyway");
+        L"CaptureKatanga: DrainGpu timeout after 100ms - proceeding anyway");
 }
 
 bool ImportHandle(CaptureKatanga::Impl& impl, uintptr_t handle_value) {
@@ -170,7 +170,7 @@ bool ImportHandle(CaptureKatanga::Impl& impl, uintptr_t handle_value) {
     // GPU TDRs while sampling this texture through the scaler shader, the
     // most useful clue is whether the producer's resource came in with the
     // bind/misc flags the shader-resource code path requires (notably
-    // BIND_SHADER_RESOURCE — without it CreateShaderResourceView would
+    // BIND_SHADER_RESOURCE - without it CreateShaderResourceView would
     // refuse but Draw against an SRV onto an underbound resource may still
     // wedge the driver). Logging every import is cheap (one line per
     // rotation) and is the fastest way to spot a Geo-11 resource we've
@@ -209,7 +209,7 @@ std::unique_ptr<CaptureKatanga> CaptureKatanga::Create(ID3D11Device* dev) {
         SECURITY_ATTRIBUTES sa{};
         sa.nLength        = sizeof(sa);
         sa.bInheritHandle = FALSE;
-        sa.lpSecurityDescriptor = nullptr;   // default DACL — same-session producers see it
+        sa.lpSecurityDescriptor = nullptr;   // default DACL - same-session producers see it
         map = CreateFileMappingA(INVALID_HANDLE_VALUE, &sa, PAGE_READWRITE,
                                  0, sizeof(uintptr_t), kMappingName);
         if (!map) {
@@ -220,7 +220,7 @@ std::unique_ptr<CaptureKatanga> CaptureKatanga::Create(ID3D11Device* dev) {
         }
         we_created = true;
         Log(NV3D::LogLevel::Info,
-            L"CaptureKatanga: open failed err=%lu — created mapping %S, waiting for producer",
+            L"CaptureKatanga: open failed err=%lu - created mapping %S, waiting for producer",
             open_err, kMappingName);
     }
     void* view = MapViewOfFile(map, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(uintptr_t));
@@ -241,7 +241,7 @@ std::unique_ptr<CaptureKatanga> CaptureKatanga::Create(ID3D11Device* dev) {
     out->impl_->mapping_view = view;
 
     // Best-effort initial import. If the slot is empty or the producer hasn't
-    // published a usable handle yet, stay in "waiting" state — TryAcquire will
+    // published a usable handle yet, stay in "waiting" state - TryAcquire will
     // poll and import as soon as a non-zero handle appears.
     uintptr_t initial = ReadMappingHandle(view);
     if (initial != 0) {
@@ -252,7 +252,7 @@ std::unique_ptr<CaptureKatanga> CaptureKatanga::Create(ID3D11Device* dev) {
         }
     } else {
         Log(NV3D::LogLevel::Info,
-            L"CaptureKatanga: mapping open, slot empty — waiting for producer");
+            L"CaptureKatanga: mapping open, slot empty - waiting for producer");
     }
 
     return out;
@@ -269,13 +269,13 @@ bool CaptureKatanga::TryAcquire(ID3D11Texture2D** out, UINT* w, UINT* h, DXGI_FO
     // submitting frames instead of repainting our control panel white.
     // Unconditional (not gated on current_handle): after ReleaseSharedHold
     // the handle is 0, but the device can still have died in the meantime
-    // (TDR while the popup was hidden) — catch it before we try an
+    // (TDR while the popup was hidden) - catch it before we try an
     // OpenSharedResource on the dead device.
     {
         HRESULT removed = impl_->device->GetDeviceRemovedReason();
         if (removed != S_OK) {
             Log(NV3D::LogLevel::Warning,
-                L"CaptureKatanga: D3D11 device removed (hr=0x%08X) — producer likely died",
+                L"CaptureKatanga: D3D11 device removed (hr=0x%08X) - producer likely died",
                 (unsigned)removed);
             impl_->lost.store(true);
             return false;
@@ -294,7 +294,7 @@ bool CaptureKatanga::TryAcquire(ID3D11Texture2D** out, UINT* w, UINT* h, DXGI_FO
             MarkBadState(*impl_);
             if (BadStateExpired(*impl_)) {
                 Log(NV3D::LogLevel::Info,
-                    L"CaptureKatanga: slot zero for >3s — disconnected");
+                    L"CaptureKatanga: slot zero for >3s - disconnected");
                 impl_->disconnected.store(true);
             }
         }
@@ -309,14 +309,14 @@ bool CaptureKatanga::TryAcquire(ID3D11Texture2D** out, UINT* w, UINT* h, DXGI_FO
         //    (no prior shared_tex to protect).
         // 2. Reset and import the new handle.
         // 3. Handle the rotation outcome:
-        //    a) Resolution CHANGED — producer rebuilt at new dims. Reading
+        //    a) Resolution CHANGED - producer rebuilt at new dims. Reading
         //       its freshly-allocated texture too early has TDR'd the GPU
         //       in testing (kills BOTH our process AND the producer's,
         //       because TDR is device-wide). Drop straight into the
         //       "disconnected" state: App will fold the FSE back to waiting,
         //       call ResetForReconnect which arms a multi-second grace
         //       timer, and only then start polling the slot again.
-        //    b) Same dims — likely the producer's standard init-then-stable
+        //    b) Same dims - likely the producer's standard init-then-stable
         //       rotation pattern (Geo-11 does this within ms of first
         //       connect). Skip one tick to let init finish and continue.
         const uint32_t prev_w = impl_->width;
@@ -328,7 +328,7 @@ bool CaptureKatanga::TryAcquire(ID3D11Texture2D** out, UINT* w, UINT* h, DXGI_FO
         impl_->shared_tex.Reset();
         if (!ImportHandle(*impl_, now)) {
             // The producer published a new non-zero handle but
-            // OpenSharedResource refused it — most likely the new texture
+            // OpenSharedResource refused it - most likely the new texture
             // isn't fully initialized yet. If we never had a handle, stay in
             // waiting state. If we previously had one (mid-session rebuild),
             // start the grace timer; only give up after kBadStateGrace.
@@ -336,7 +336,7 @@ bool CaptureKatanga::TryAcquire(ID3D11Texture2D** out, UINT* w, UINT* h, DXGI_FO
                 MarkBadState(*impl_);
                 if (BadStateExpired(*impl_)) {
                     Log(NV3D::LogLevel::Info,
-                        L"CaptureKatanga: import failing for >3s — disconnected");
+                        L"CaptureKatanga: import failing for >3s - disconnected");
                     impl_->disconnected.store(true);
                 }
             }
@@ -347,7 +347,7 @@ bool CaptureKatanga::TryAcquire(ID3D11Texture2D** out, UINT* w, UINT* h, DXGI_FO
             const bool dim_changed = (impl_->width != prev_w || impl_->height != prev_h);
             if (dim_changed) {
                 Log(NV3D::LogLevel::Info,
-                    L"CaptureKatanga: resolution change %ux%u → %ux%u — disconnecting "
+                    L"CaptureKatanga: resolution change %ux%u → %ux%u - disconnecting "
                     L"so producer can settle before we attempt a read (skips a TDR risk)",
                     prev_w, prev_h, impl_->width, impl_->height);
                 // Drop the just-imported texture too; we don't want anyone
@@ -357,7 +357,7 @@ bool CaptureKatanga::TryAcquire(ID3D11Texture2D** out, UINT* w, UINT* h, DXGI_FO
                 return false;
             }
             Log(NV3D::LogLevel::Info,
-                L"CaptureKatanga: rotation absorbed (same dims) — skipping one tick to let producer init");
+                L"CaptureKatanga: rotation absorbed (same dims) - skipping one tick to let producer init");
             return false;
         }
     }
@@ -392,7 +392,7 @@ void CaptureKatanga::ReleaseSharedHold() {
     if (!impl_) return;
     if (!impl_->shared_tex) return;
     // Drain GPU work that references the shared_tex BEFORE we release our
-    // ref — same reasoning as the rotation drain. Then drop both the ref
+    // ref - same reasoning as the rotation drain. Then drop both the ref
     // and the cached handle value so the next TryAcquire treats the slot
     // as a fresh import.
     DrainGpu(impl_->device.Get());
@@ -407,19 +407,19 @@ void CaptureKatanga::ResetForReconnect() {
     // Recoverable transition: clear the soft-disconnect state and the cached
     // import so the next TryAcquire treats whatever shows up in the slot as a
     // fresh first import. We deliberately keep the mapping open and don't
-    // touch `lost` — that's reserved for unrecoverable TDR / device-removed.
+    // touch `lost` - that's reserved for unrecoverable TDR / device-removed.
     impl_->shared_tex.Reset();
     impl_->current_handle = 0;
     impl_->bad_state_since = {};
     impl_->disconnected.store(false);
     // Arm the post-reconnect read-grace timer. After this the next
     // TryAcquire will import any handle it sees but won't return the texture
-    // for reading until 1.5s have passed — long enough for a producer that
+    // for reading until 1.5s have passed - long enough for a producer that
     // just rebuilt a shared texture (resolution change, mode toggle) to be
     // fully ready. Reads earlier than this caused GPU TDRs in testing.
     impl_->read_ready_at = std::chrono::steady_clock::now() + std::chrono::milliseconds(1500);
     Log(NV3D::LogLevel::Info,
-        L"CaptureKatanga: reset for reconnect — read-grace 1500ms armed");
+        L"CaptureKatanga: reset for reconnect - read-grace 1500ms armed");
 }
 
 void CaptureKatanga::Stop() {

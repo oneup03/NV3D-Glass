@@ -33,7 +33,7 @@ namespace nv3dg {
 // that opens that mapping reads the handle and imports the texture into its
 // own D3D11 device via ID3D11Device::OpenSharedResource.
 //
-// The handle is API-agnostic — D3D9Ex (pSharedHandle) and D3D11
+// The handle is API-agnostic - D3D9Ex (pSharedHandle) and D3D11
 // (D3D11_RESOURCE_MISC_SHARED) both yield session-global KMT handles that
 // OpenSharedResource accepts transparently. NT-handle producers
 // (D3D11_RESOURCE_MISC_SHARED_NTHANDLE) cannot publish through this contract
@@ -60,7 +60,7 @@ public:
     // Clear soft-disconnect state so the next TryAcquire can detect a new
     // producer without tearing down the file mapping. Safe no-op if the
     // source is in any state other than disconnected. Does NOT recover from
-    // IsLost — that's a fatal device-removed condition.
+    // IsLost - that's a fatal device-removed condition.
     void ResetForReconnect();
 
     // Drop our reference to the producer's shared D3D11 texture (drain GPU
@@ -71,7 +71,7 @@ public:
     // fault on. The next TryAcquire will re-import from the mapping slot.
     void ReleaseSharedHold();
 
-    // Dimensions of the shared texture at first open — used by App::Start to
+    // Dimensions of the shared texture at first open - used by App::Start to
     // size the local staging texture so CopyResource hits the fast path.
     UINT InitialWidth()  const;
     UINT InitialHeight() const;

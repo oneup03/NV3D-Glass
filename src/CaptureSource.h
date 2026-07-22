@@ -43,7 +43,7 @@ public:
     // wait through (e.g. Katanga producer process exited but our shared
     // mapping is still open). Hosts may transition to a "waiting" state and
     // call ResetForReconnect() rather than tearing the session down. Default
-    // false — only Katanga distinguishes disconnect from lost today.
+    // false - only Katanga distinguishes disconnect from lost today.
     virtual bool IsDisconnected() const { return false; }
 
     // Stop the underlying capture session and release backend resources.

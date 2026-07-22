@@ -15,7 +15,7 @@
  * along with NV3D-Glass. If not, see <http://www.gnu.org/licenses/>.
  */
 
-// NV3D-Glass — capture a side-by-side stereo source and re-present it as
+// NV3D-Glass - capture a side-by-side stereo source and re-present it as
 // NVIDIA 3D Vision via NV3DLib's FSE click-through window.
 //
 // Process layout:
@@ -59,7 +59,7 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int) {
         rc = 2;
     }
 
-    // Log file stays open here on purpose — App::Shutdown used to call
+    // Log file stays open here on purpose - App::Shutdown used to call
     // ShutdownFileLog() at the very end, which meant nothing past that point
     // could be logged. We deferred the close to here so the WinRT teardown
     // and ~App double-Shutdown are observable. The remaining freeze surface
@@ -73,7 +73,7 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int) {
 
     // Skip CRT static destructors and DLL_PROCESS_DETACH entirely. A hard
     // display freeze (reboot required) was observed AFTER the last logged
-    // line above — i.e. inside process teardown, where nvd3dumx.dll /
+    // line above - i.e. inside process teardown, where nvd3dumx.dll /
     // nvapi64.dll / d3d9.dll run their detach code against driver stereo
     // state our FSE teardown had just strained (that session's D3D9 release
     // stalled 1.8s while the driver reclaimed a dying game's GPU context).

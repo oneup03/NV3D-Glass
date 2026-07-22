@@ -109,7 +109,7 @@ private:
     HMONITOR ResolveOutputMonitor() const;
 
     // Cursor lock / 3D cursor. ComputeCaptureContentRect returns the screen-
-    // space rectangle of what we're capturing — the ClipCursor region AND the
+    // space rectangle of what we're capturing - the ClipCursor region AND the
     // domain the mouse position is normalized against for the 3D cursor. It
     // follows the current foreground window (so alt+tab updates it), falling
     // back to the resolved capture target when the foreground is one of our
@@ -121,14 +121,14 @@ private:
 
     // Capture idle-floor mitigation. When the mouse is idle and our fullscreen
     // popup occludes the game, both WGC and Katanga capture collapse to a few
-    // fps — WGC because DWM stops compositing the occluded source (its frame
+    // fps - WGC because DWM stops compositing the occluded source (its frame
     // pool starves), Katanga because the OS/engine throttles the occluded
     // game's own rendering (the shared texture stops updating). Drives the
     // source hands-off every tick (~120Hz). Always opts the game process out of
     // power throttling, then applies whichever of two opt-in wake methods the
     // user enabled: force_full_capture_hz (net-zero SendInput cursor jiggle —
     // forces DWM composition) and/or force_capture_hz_postmsg (targeted
-    // WM_MOUSEMOVE to the game window — keeps an input-driven loop pumping).
+    // WM_MOUSEMOVE to the game window - keeps an input-driven loop pumping).
     // Self-gates on state / WGC-or-Katanga source / fse_visible_.
     void   DriveIdleCaptureHz();
 
@@ -147,7 +147,7 @@ private:
     Renderer                           renderer_;
     NV3DPresenter                      presenter_;
     // Crop region applied to each captured frame before it lands in staging
-    // — used to strip the title bar / borders from window-source captures.
+    // - used to strip the title bar / borders from window-source captures.
     // Empty (zero-area) rect means "no crop, copy the whole frame".
     RECT                               capture_src_region_{0, 0, 0, 0};
     HotkeyManager                      hotkeys_;
@@ -167,8 +167,8 @@ private:
     HANDLE                             tracked_process_handle_ = nullptr;
 
     // Focus watcher state. The thread is JOINABLE (not detached) so we can
-    // guarantee it has fully exited — and therefore released any
-    // AttachThreadInput pair it was holding — before our process moves on.
+    // guarantee it has fully exited - and therefore released any
+    // AttachThreadInput pair it was holding - before our process moves on.
     //
     // A detached watcher is the root cause of the "whole-display freeze on
     // quit, cursor frozen, reboot required" symptom: if the process exits
@@ -194,7 +194,7 @@ private:
     // the next TryAcquire can detect a new producer.
     void EnterKatangaWaitingMode();
 
-    // Diagnostic frame counter — every N ticks we log the live D3D11 device
+    // Diagnostic frame counter - every N ticks we log the live D3D11 device
     // state, gated on NV3D_GLASS_D3D11_DEBUG=1. Used to catch a
     // partially-removed device before the explicit TDR-detection paths
     // (CaptureKatanga IsLost, pre-SubmitFrame check) fire.
@@ -209,7 +209,7 @@ private:
     DWORD                              adopt_candidate_pid_ = 0;
     // Last foreground process that isn't us and isn't the shell, sampled
     // continuously in Tick. The Katanga reveal falls back to this when the
-    // foreground at first-frame is our own control panel — the COMMON case,
+    // foreground at first-frame is our own control panel - the COMMON case,
     // since the user just clicked Start on us while the game was already
     // running. Without it the focus hand-off targeted nothing and the
     // restored popup kept activation on our process instead of the game.
@@ -225,7 +225,7 @@ private:
     bool                               last_content_valid_ = false;
     RECT                               last_content_rect_ { 0, 0, 0, 0 };
     // Presenter-death watchdog. Windows can context-reset JUST our D3D9 FSE
-    // device (D3DERR_DEVICEHUNG, no system-wide TDR) — the D3D11 device
+    // device (D3DERR_DEVICEHUNG, no system-wide TDR) - the D3D11 device
     // stays healthy so the device-removed watchdogs never fire, NV3DLib
     // marks itself dead and fast-fails every Present, and the 3D window
     // freezes forever. Tick counts consecutive failing SubmitFrame HRESULTs

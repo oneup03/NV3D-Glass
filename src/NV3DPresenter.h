@@ -53,21 +53,21 @@ public:
 
     // Toggle the FSE popup's visibility. The actual SW_MINIMIZE / SW_RESTORE
     // is done on NV3DLib's window thread (cross-thread ShowWindow on a FSE
-    // D3D9Ex device window wedges DWM). Idempotent — calling with the current
+    // D3D9Ex device window wedges DWM). Idempotent - calling with the current
     // state is a no-op.
     void SetVisible(bool visible);
 
     // Live eye-swap toggle. Updates the NV3D signature row on the next frame
-    // — driver picks up the new routing on the following PresentEx with no
+    // - driver picks up the new routing on the following PresentEx with no
     // teardown / re-Init / visible glitch. Safe to call mid-session at any
-    // time. AUTOMATIC-mode (NV3D signature) path only — the legacy DIRECT
+    // time. AUTOMATIC-mode (NV3D signature) path only - the legacy DIRECT
     // path that used SetActiveEye is no longer in the build.
     void SetEyeSwap(bool enable);
 
     // Tell NV3DLib the D3D11 device (and therefore the whole adapter) is
     // lost, BEFORE Shutdown(). Without this the library's D3D9 side never
     // observes the failure (a hidden popup means no D3D9 call runs) and its
-    // teardown takes the live path — Stereo_DestroyHandle + COM Release into
+    // teardown takes the live path - Stereo_DestroyHandle + COM Release into
     // a wedged kernel driver, both of which can block indefinitely.
     void NotifyDeviceLost();
 

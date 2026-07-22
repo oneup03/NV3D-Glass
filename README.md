@@ -9,7 +9,7 @@ captured app; runs as a standalone .exe with an ImGui control panel.
 
 - Windows 10 1903+ / Windows 11 (WGC capture)
 - NVIDIA GPU with the legacy 3D Vision driver installed. The driver works on
-  **any NVIDIA GPU and any current display-driver version** — it's installed
+  **any NVIDIA GPU and any current display-driver version** - it's installed
   alongside your main driver, not bundled into it. See
   [3DVision4All / Native install](https://oneup03.github.io/3DVision4All/docs/Native)
   for step-by-step instructions.
@@ -24,15 +24,15 @@ captured app; runs as a standalone .exe with an ImGui control panel.
 
 Download the latest pre-release from the
 [Releases](https://github.com/oneup03/NV3D-Glass/releases) page, unzip, and run `NV3D-Glass.exe`. The
-binary is self-contained — no installer.
+binary is self-contained - no installer.
 
 ## Quick start
 
 1. Launch `NV3D-Glass.exe`. The control panel opens.
-2. **Capture Source** — pick `Window`, choose the SbS-producing app from
+2. **Capture Source** - pick `Window`, choose the SbS-producing app from
    the dropdown. Or pick `Monitor` to capture a whole display, or `Katanga`
    to receive from a Geo-11/Katanga producer over the shared-memory channel.
-3. **3D Vision Output** — leave `(auto)` to let NV3DLib pick the
+3. **3D Vision Output** - leave `(auto)` to let NV3DLib pick the
    3D-Vision-certified display, or pick one explicitly.
 4. Click **Start**. The control panel minimises and a click-through FSE
    popup appears on the 3D Vision display. Put on the shutter glasses;
@@ -45,9 +45,9 @@ binary is self-contained — no installer.
 | Hotkey   | Action                                                      |
 |----------|-------------------------------------------------------------|
 | Ctrl+F8  | Show / hide the 3D Vision FSE window (also kills/spawns the focus watcher) |
-| Ctrl+PgDn | Toggle eye-swap (reverses left/right; ~300 ms FSE blink while the presenter restarts) |
+| Shift+F8 | Toggle eye-swap (reverses left/right; ~300 ms FSE blink while the presenter restarts) |
 
-Both are global — they fire even when the captured game has foreground.
+Both are global - they fire even when the captured game has foreground.
 
 ## Tray menu
 
@@ -57,10 +57,10 @@ button quits the app (and tears down the FSE popup cleanly).
 
 ## Settings & log
 
-- `NV3D-Glass.ini` (next to the .exe) — picked source, output monitor,
+- `NV3D-Glass.ini` (next to the .exe) - picked source, output monitor,
   eye-swap, LightBoost / Driver Fix toggles, hotkey bindings, panel
   geometry.
-- `NV3D-Glass.log` (next to the .exe) — all `[NV3D]` messages from the
+- `NV3D-Glass.log` (next to the .exe) - all `[NV3D]` messages from the
   presenter + suppressor + LightBoost subsystems, plus app-level
   start/stop/shutdown checkpoints. First file to attach when reporting
   an issue.
@@ -76,7 +76,7 @@ button quits the app (and tears down the FSE popup cleanly).
   and the rating/info overlay. Turn off if you suspect the
   hooks are interacting badly with another tool.
 - **Click-through FSE popup**: the 3D output window is `WS_EX_LAYERED |
-  WS_EX_TRANSPARENT` — mouse clicks pass through to whatever is
+  WS_EX_TRANSPARENT` - mouse clicks pass through to whatever is
   underneath, so you can interact with the captured game without alt-tab.
 - **Monitor capture caveat**: if you pick the *same* monitor as both
   source and output, the app refuses to start (would feed back into
@@ -118,15 +118,15 @@ LGPL-2.1-or-later. See SPDX headers on individual source files and the
 
 ## Acknowledgments
 
-- [NV3DLib](https://github.com/oneup03/NV3D-Lib) — the 3D Vision presenter
-- [VRto3D](https://github.com/oneup03/VRto3D) — reference for the FSE
+- [NV3DLib](https://github.com/oneup03/NV3D-Lib) - the 3D Vision presenter
+- [VRto3D](https://github.com/oneup03/VRto3D) - reference for the FSE
   D3D9Ex + click-through + focus-management patterns
-- [SR-Loom](https://github.com/effcol/SR-Loom) — reference structure for
+- [SR-Loom](https://github.com/effcol/SR-Loom) - reference structure for
   the standalone-app shell + WGC perf patterns
-- [Katanga](https://github.com/bo3b/Katanga) — defines the shared-memory
+- [Katanga](https://github.com/bo3b/Katanga) - defines the shared-memory
   producer/consumer protocol our `Katanga` source mode implements
 - [Geo-11](https://helixmod.blogspot.com/2022/06/announcing-new-geo-11-3d-driver.html) —
   modern producer for the Katanga protocol; we consume what it publishes
-- [VRScreenCap](https://github.com/artumino/VRScreenCap) — prior art for the
+- [VRScreenCap](https://github.com/artumino/VRScreenCap) - prior art for the
   Katanga shared-memory consumer pattern
-- [Dear ImGui](https://github.com/ocornut/imgui) — control panel UI
+- [Dear ImGui](https://github.com/ocornut/imgui) - control panel UI

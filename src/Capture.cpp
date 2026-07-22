@@ -89,11 +89,11 @@ bool BuildSession(CaptureWGC::Impl& impl, ID3D11Device* dev) {
             });
         impl.session = impl.pool.CreateCaptureSession(impl.item);
         try { impl.session.IsCursorCaptureEnabled(false); } catch (...) {}
-        // Win11 22H2+ only — older OS throws, ignore.
+        // Win11 22H2+ only - older OS throws, ignore.
         try { impl.session.IsBorderRequired(false);       } catch (...) {}
         // Lift the WGC ~60fps cap. Without an explicit MinUpdateInterval,
         // WGC delivers frames at roughly display-composition rate (60Hz)
-        // regardless of the source's actual update rate — which manifests as
+        // regardless of the source's actual update rate - which manifests as
         // "slow motion" when capturing higher-rate sources, and as starving
         // 30fps content of GPU time when our consumer keeps polling at 125Hz
         // expecting fresh frames that never come. 1ms tracks 120/144/240Hz
@@ -117,7 +117,7 @@ CaptureWGC::~CaptureWGC() { Stop(); }
 bool CaptureWGC::IsSupported() {
     // GraphicsCaptureSession::IsSupported() activates the runtime class to
     // answer. On a Windows build too old to carry WGC at all (pre-1803, some
-    // LTSC branches) that activation throws instead of returning false — which,
+    // LTSC branches) that activation throws instead of returning false - which,
     // uncaught, terminated the process. Fold any throw to "unsupported".
     try {
         return winrt::GraphicsCaptureSession::IsSupported();
@@ -144,12 +144,12 @@ std::unique_ptr<CaptureWGC> CaptureWGC::CreateForWindow(ID3D11Device* dev, HWND 
         if (!BuildSession(*out->impl_, dev))  return nullptr;
     } catch (winrt::hresult_error const& e) {
         Log(NV3D::LogLevel::Warning,
-            L"CaptureWGC::CreateForWindow: WGC threw hr=0x%08X (%s) — unavailable",
+            L"CaptureWGC::CreateForWindow: WGC threw hr=0x%08X (%s) - unavailable",
             (unsigned)e.code(), e.message().c_str());
         return nullptr;
     } catch (...) {
         Log(NV3D::LogLevel::Warning,
-            L"CaptureWGC::CreateForWindow: WGC threw unknown exception — unavailable");
+            L"CaptureWGC::CreateForWindow: WGC threw unknown exception - unavailable");
         return nullptr;
     }
 
@@ -188,7 +188,7 @@ std::unique_ptr<CaptureWGC> CaptureWGC::CreateForMonitor(ID3D11Device* dev, HMON
     if (!IsSupported()) return nullptr;
     auto out = std::make_unique<CaptureWGC>();
     out->impl_ = std::make_unique<Impl>();
-    // Same throw surface as CreateForWindow — guard so the caller can fall
+    // Same throw surface as CreateForWindow - guard so the caller can fall
     // through to CaptureDXGI / test pattern instead of terminating.
     try {
         auto factory = winrt::get_activation_factory<winrt::GraphicsCaptureItem, IGraphicsCaptureItemInterop>();
@@ -198,12 +198,12 @@ std::unique_ptr<CaptureWGC> CaptureWGC::CreateForMonitor(ID3D11Device* dev, HMON
         if (!BuildSession(*out->impl_, dev))  return nullptr;
     } catch (winrt::hresult_error const& e) {
         Log(NV3D::LogLevel::Warning,
-            L"CaptureWGC::CreateForMonitor: WGC threw hr=0x%08X (%s) — unavailable",
+            L"CaptureWGC::CreateForMonitor: WGC threw hr=0x%08X (%s) - unavailable",
             (unsigned)e.code(), e.message().c_str());
         return nullptr;
     } catch (...) {
         Log(NV3D::LogLevel::Warning,
-            L"CaptureWGC::CreateForMonitor: WGC threw unknown exception — unavailable");
+            L"CaptureWGC::CreateForMonitor: WGC threw unknown exception - unavailable");
         return nullptr;
     }
     return out;

@@ -18,7 +18,7 @@ out/
 x64/
 Win32/
 
-## VS Code — keep tasks/launch/settings/extensions for shared dev experience;
+## VS Code - keep tasks/launch/settings/extensions for shared dev experience;
 ## ignore everything else (workspace storage, history, etc.)
 .vscode/*
 !.vscode/tasks.json

@@ -36,8 +36,8 @@
 // PROCESS_POWER_THROTTLING_STATE (used by DriveIdleCaptureHz to opt the game
 // out of Win11 EcoQoS execution throttling) is only declared by the SDK when
 // NTDDI_VERSION >= NTDDI_WIN10_RS1. This project targets the 10.0 SDK but
-// doesn't pin NTDDI_VERSION, so it defaults to NTDDI_WIN10 — one notch below
-// that gate — and the struct/macros are absent. The runtime API exists on
+// doesn't pin NTDDI_VERSION, so it defaults to NTDDI_WIN10 - one notch below
+// that gate - and the struct/macros are absent. The runtime API exists on
 // Windows 10 1607+ regardless (SetProcessInformation is Win8+, and the
 // ProcessPowerThrottling enumerator is unconditionally present in the Win8+
 // PROCESS_INFORMATION_CLASS enum), so declare just what we need when the SDK
@@ -88,7 +88,7 @@ void ForceFocusToGame(HWND target) {
     DWORD target_tid = GetWindowThreadProcessId(target, nullptr);
     if (!target_tid) return;
     AttachThreadInput(my_tid, target_tid, TRUE);
-    // SW_RESTORE only when the target is actually minimized — calling
+    // SW_RESTORE only when the target is actually minimized - calling
     // SW_RESTORE on a MAXIMIZED window un-maximizes it (per MSDN), which
     // shrinks the captured source mid-session and produces a picture-in-
     // picture artifact because our staging is sized to the pre-shrink
@@ -127,7 +127,7 @@ bool App::Init(HINSTANCE hInstance) {
     hotkeys_.Attach(hwnd_);
     ReregisterHotkeys();
 
-    tray_.Install(hwnd_, L"NV3D-Glass — capture & 3D Vision");
+    tray_.Install(hwnd_, L"NV3D-Glass - capture & 3D Vision");
     tray_.SetActions(
         [this] { ShowPanel(); },
         [this] { HidePanel(); },
@@ -141,7 +141,7 @@ bool App::Init(HINSTANCE hInstance) {
     ShowWindow(hwnd_, SW_SHOW);
     Log(NV3D::LogLevel::Info, L"App::Init  complete  hwnd=%p panel shown", (void*)hwnd_);
 
-    // Don't autostart on launch — the saved source may be stale and the user
+    // Don't autostart on launch - the saved source may be stale and the user
     // hasn't asked us to do anything yet. Wait for them to hit Start.
 
     return true;
@@ -150,7 +150,7 @@ bool App::Init(HINSTANCE hInstance) {
 void App::Shutdown() {
     // Step-by-step logs so a freeze in any one step pinpoints itself in the
     // log. The freeze symptom we're hunting (whole-display freeze on quit
-    // after a session) goes silent somewhere in this chain — without these
+    // after a session) goes silent somewhere in this chain - without these
     // checkpoints we can't tell whether it's tray removal, ImGui DX11
     // shutdown, swap chain release, the control-panel DestroyWindow, etc.
     Log(NV3D::LogLevel::Info, L"App::Shutdown  begin");
@@ -220,7 +220,7 @@ bool App::CreateControlPanelWindow() {
     int h = settings_.panel_h > 0 ? settings_.panel_h : 600;
     if (x == CW_USEDEFAULT || y == CW_USEDEFAULT) { x = 120; y = 120; }
     // Recover from a persisted off-screen sentinel (-32000, -32000, w=160,
-    // h=39) — that's what GetWindowRect returns for a minimized window.
+    // h=39) - that's what GetWindowRect returns for a minimized window.
     // Pre-fix INI files may have it; without this clamp the panel opens
     // invisibly off-screen.
     if (x < -10000 || y < -10000 || w < 100 || h < 100) {
@@ -254,7 +254,7 @@ void App::PersistPanelGeometry() {
     // rect via rcNormalPosition. We were previously using GetWindowRect which
     // on a minimized window returns the off-screen sentinel
     // (-32000, -32000, -31840, -31961). Saving that to the INI made every
-    // subsequent launch open the panel invisibly off-screen — symptom was
+    // subsequent launch open the panel invisibly off-screen - symptom was
     // "control panel never pops up, only title bar in taskbar preview."
     WINDOWPLACEMENT wp{};
     wp.length = sizeof(wp);
@@ -304,7 +304,7 @@ bool App::Start() {
     // Try to start the capture session FIRST so we can size the staging
     // texture to exactly what WGC will deliver. CopyResource on dim-match is
     // an order of magnitude cheaper than the scaler shader pass we'd
-    // otherwise need every frame — and the scaler's extra GPU work was
+    // otherwise need every frame - and the scaler's extra GPU work was
     // contending with the captured source's own rendering, dragging the
     // observed source rate down to "slow motion" levels.
     //
@@ -313,29 +313,29 @@ bool App::Start() {
     std::wstring capture_warning;
     if (kind == SourceKind::Window) {
         if (!src_hwnd) {
-            capture_warning = L"selected window not running — showing test pattern";
+            capture_warning = L"selected window not running - showing test pattern";
         } else if (!CaptureWGC::IsSupported()) {
             capture_warning = L"Windows Graphics Capture not available on this system "
-                              L"(needs Windows 10 build 1803+) — showing test pattern";
+                              L"(needs Windows 10 build 1803+) - showing test pattern";
         } else {
             cap_ = CaptureWGC::CreateForWindow(renderer_.Device(), src_hwnd);
-            if (!cap_) capture_warning = L"WGC refused this window — showing test pattern";
+            if (!cap_) capture_warning = L"WGC refused this window - showing test pattern";
         }
     } else if (kind == SourceKind::Monitor) {
         if (!src_hmon) {
-            capture_warning = L"selected monitor not connected — showing test pattern";
+            capture_warning = L"selected monitor not connected - showing test pattern";
         } else if (HMONITOR out_hmon = ResolveOutputMonitor();
                    out_hmon && out_hmon == src_hmon) {
             // Both WGC monitor mode and DXGI Output Duplication scan out the
             // composited desktop including our FSE popup. Capturing the same
             // monitor we're presenting on recurses (every frame contains the
             // previous frame's output). Refuse before we open the session.
-            capture_warning = L"capture and output monitor are the same — pick a different display to avoid a feedback loop";
+            capture_warning = L"capture and output monitor are the same - pick a different display to avoid a feedback loop";
         } else {
             cap_ = CaptureWGC::CreateForMonitor(renderer_.Device(), src_hmon);
             if (!cap_) {
                 cap_ = CaptureDXGI::CreateForMonitor(renderer_.Device(), src_hmon);
-                if (!cap_) capture_warning = L"WGC + DXGI both refused this monitor — showing test pattern";
+                if (!cap_) capture_warning = L"WGC + DXGI both refused this monitor - showing test pattern";
             }
         }
     } else if (kind == SourceKind::Katanga) {
@@ -344,18 +344,18 @@ bool App::Start() {
         // producer publishes a handle. The test pattern Renderer paints below
         // is what the user sees until then.
         cap_ = CaptureKatanga::Create(renderer_.Device());
-        if (!cap_) capture_warning = L"Katanga mapping setup failed — showing test pattern";
+        if (!cap_) capture_warning = L"Katanga mapping setup failed - showing test pattern";
     }
 
     Log(NV3D::LogLevel::Info,
-        L"App::Start  capture created cap_=%p — %s",
+        L"App::Start  capture created cap_=%p - %s",
         (void*)cap_.get(),
         capture_warning.empty() ? L"ok" : capture_warning.c_str());
 
     UINT staging_w = 0, staging_h = 0;
     capture_src_region_ = RECT{0, 0, 0, 0};
     if (auto* wgc = dynamic_cast<CaptureWGC*>(cap_.get())) {
-        // Crop to the window's client area — strips the title bar, borders,
+        // Crop to the window's client area - strips the title bar, borders,
         // and DWM shadow so they don't get sliced as part of the SbS layout.
         // For monitor sources / borderless-fullscreen windows ClientAreaInCapture
         // returns the full frame, so this stays a no-op.
@@ -373,13 +373,13 @@ bool App::Start() {
     }
     // Katanga deliberately falls through to the monitor-based default below
     // even when the producer is already up: pinning staging to a stable size
-    // (output_monitor × 2) lets the scaler handle every source size — both
+    // (output_monitor × 2) lets the scaler handle every source size - both
     // mid-session producer-side resolution changes and upscale-when-smaller —
     // without ever resizing the staging texture or restarting the presenter.
     if (staging_w == 0 || staging_h == 0) {
         // Test-pattern mode (no cap_), DXGI fallback (no Initial* getter), or
         // Katanga waiting (producer hasn't published yet). Size the staging
-        // to the output monitor's resolution × 2 in width — that matches the
+        // to the output monitor's resolution × 2 in width - that matches the
         // SbS layout NV3DLib expects and lines up with the panel a typical
         // producer is rendering at, so the post-Restart staging will already
         // be the right size in the common case.
@@ -393,7 +393,7 @@ bool App::Start() {
             staging_w = static_cast<UINT>(mi.rcMonitor.right  - mi.rcMonitor.left) * 2;
             staging_h = static_cast<UINT>(mi.rcMonitor.bottom - mi.rcMonitor.top);
         } else {
-            // Ultimate fallback — no monitor info available at all.
+            // Ultimate fallback - no monitor info available at all.
             staging_w = 2560;
             staging_h = 720;
         }
@@ -430,7 +430,7 @@ bool App::Start() {
     // For "test pattern only" runs (no source) AND Katanga (game process
     // unknown until the reveal; popup lifecycle is app-driven), pass our own
     // PID so NV3DLib's VRto3D loop keeps the popup pinned and exits cleanly
-    // when we exit. Safe because the lib loop never focus-steals — it only
+    // when we exit. Safe because the lib loop never focus-steals - it only
     // auto-minimizes when the tracked process dies. Do NOT pass 0: that
     // selects the legacy minimize-on-host-focus-loss mode.
     if (tracked_pid == 0) tracked_pid = GetCurrentProcessId();
@@ -467,7 +467,7 @@ bool App::Start() {
     //      panel hide before we override it.
     //   3. ForceFocus to the game.
     //   4. Spawn a detached watcher thread that re-asserts ForceFocus once
-    //      per second for 15s — VRto3D's exact pattern (their
+    //      per second for 15s - VRto3D's exact pattern (their
     //      nvstereo_dx9_presenter.cpp:1303-1314). The first
     //      SetForegroundWindow is fragile; the watcher catches anything that
     //      steals focus back in the first few seconds (the game's own
@@ -527,7 +527,7 @@ void App::Stop() {
     // the D3D9 teardown. cap_->Stop() alone releases CaptureKatanga's ref
     // without draining the GPU, and the scaler's cached SRV would keep the
     // producer's allocation open straight through the FSE restore/release
-    // modesets inside presenter_.Shutdown() — the same class of hold that
+    // modesets inside presenter_.Shutdown() - the same class of hold that
     // TDRs a half-wedged driver on the minimize transition.
     if (auto* kat = dynamic_cast<CaptureKatanga*>(cap_.get())) {
         kat->ReleaseSharedHold();
@@ -565,7 +565,7 @@ void App::Restart() {
 
 void App::ToggleEyeSwap() {
     settings_.eye_swap = !settings_.eye_swap;
-    // Live update via NV3DLib's signature-row rewrite — no teardown needed.
+    // Live update via NV3DLib's signature-row rewrite - no teardown needed.
     // The legacy DIRECT-mode path required a Restart to swap left/right
     // StretchRect sources; AUTOMATIC mode just flips a bit in the next
     // signature row and the driver re-routes on the next PresentEx.
@@ -588,7 +588,7 @@ void App::ShowPanel() {
 
 void App::HidePanel() {
     if (!hwnd_) return;
-    // SW_MINIMIZE rather than SW_HIDE so the taskbar icon stays — the user
+    // SW_MINIMIZE rather than SW_HIDE so the taskbar icon stays - the user
     // can click it to restore the control panel without needing the hotkey.
     ShowWindow(hwnd_, SW_MINIMIZE);
     panel_visible_ = false;
@@ -626,14 +626,14 @@ void App::ToggleFseVisible() {
             kat->ReleaseSharedHold();
         }
         // ReleaseSharedHold drops CaptureKatanga's reference, but the scaler
-        // pipeline caches an SRV on the SAME cross-process texture — without
+        // pipeline caches an SRV on the SAME cross-process texture - without
         // dropping that too, the producer's allocation stays open on our
         // device straight through the SW_MINIMIZE stereo teardown, which is
         // the exact hold the release above exists to eliminate. (Any queued
         // scaler draw was already flushed by ReleaseSharedHold's DrainGpu.)
         renderer_.InvalidateScalerCache();
         // Capture is paused for the whole hidden period (see Tick), so also
-        // park the gap telemetry — a stale timestamp would otherwise log a
+        // park the gap telemetry - a stale timestamp would otherwise log a
         // bogus minutes-long "producer frame gap ended" at restore.
         last_capture_frame_ts_ = {};
         producer_gap_logged_   = false;
@@ -658,7 +658,7 @@ void App::ReleaseCursorClip() {
 
 void App::DriveIdleCaptureHz() {
     // Both WGC (Window/Monitor) AND Katanga capture floor to a few fps when the
-    // mouse is idle and our fullscreen popup occludes the game — but for two
+    // mouse is idle and our fullscreen popup occludes the game - but for two
     // different reasons, so we attack both:
     //   * WGC: DWM stops compositing the occluded source, so its frame pool
     //     starves. Fixed by forcing DWM composition (the cursor jiggle).
@@ -675,7 +675,7 @@ void App::DriveIdleCaptureHz() {
                  settings_.source_kind == SourceKind::Monitor ||
                  settings_.source_kind == SourceKind::Katanga);
 
-    // Two independent wake methods (see Settings) — users pick whichever works
+    // Two independent wake methods (see Settings) - users pick whichever works
     // on their machine/game, or both. The power-throttle opt-out below applies
     // whenever either is on.
     const bool jiggle_on = settings_.force_full_capture_hz;
@@ -695,13 +695,13 @@ void App::DriveIdleCaptureHz() {
 
     // (1) One-shot per game process: opt it out of execution-speed power
     // throttling. Win11 EcoQoS throttles a fully-occluded process's CPU/GPU
-    // frequency, which starves the game's render loop system-wide — hits both
-    // WGC and Katanga — and is machine-dependent (Win11 vs 10, hardware), the
+    // frequency, which starves the game's render loop system-wide - hits both
+    // WGC and Katanga - and is machine-dependent (Win11 vs 10, hardware), the
     // likeliest reason a fix that works on one PC fails on another. It's
     // side-effect-free and reverts when the game exits, so we never restore it.
     // Done once per game pid (both the opt-out and the HWND resolve, so we
     // never run EnumWindows at tick rate). cached_game_hwnd_ may stay null if
-    // the window can't be found — the targeted wake below just no-ops then.
+    // the window can't be found - the targeted wake below just no-ops then.
     if (have_game && game_pid != game_process_tweaked_pid_) {
         game_process_tweaked_pid_ = game_pid;
         if (HANDLE hp = OpenProcess(PROCESS_SET_INFORMATION, FALSE, game_pid)) {
@@ -718,7 +718,7 @@ void App::DriveIdleCaptureHz() {
         } else {
             Log(NV3D::LogLevel::Warning,
                 L"App::DriveIdleCaptureHz  OpenProcess(SET_INFORMATION pid=%lu) "
-                L"failed err=%lu — power-throttle opt-out skipped",
+                L"failed err=%lu - power-throttle opt-out skipped",
                 (unsigned long)game_pid, GetLastError());
         }
 
@@ -737,8 +737,8 @@ void App::DriveIdleCaptureHz() {
     }
 
     // Wake EVERY tick. The main loop ticks at ~125Hz (App::Run's 8ms cadence),
-    // so poking each tick drives the source at ~120Hz — the full 120Hz
-    // frame-sequential output rate — INDEPENDENT of the panel's reported
+    // so poking each tick drives the source at ~120Hz - the full 120Hz
+    // frame-sequential output rate - INDEPENDENT of the panel's reported
     // refresh. Deliberately fixed rather than derived from DEVMODE: LightBoost
     // custom timings / mode-sets can make the reported refresh unreliable, and
     // a fixed 8.33ms (120Hz) interval gate would alias against the 8ms tick
@@ -750,7 +750,7 @@ void App::DriveIdleCaptureHz() {
     // a DWM composition pass, which pulls the occluded window's redirection
     // surface into the WGC frame pool. Nudge +1px then -1px in one atomic
     // SendInput: two genuine events reach DWM, cursor lands exactly back at
-    // origin — no visible motion, nothing for ClipCursor to fight, raw-input
+    // origin - no visible motion, nothing for ClipCursor to fight, raw-input
     // game nets zero.
     if (jiggle_on) {
         INPUT in[2]{};
@@ -768,7 +768,7 @@ void App::DriveIdleCaptureHz() {
     // (3) Targeted wake (force_capture_hz_postmsg): post a same-position
     // WM_MOUSEMOVE straight to the game window. Unlike the global jiggle this
     // doesn't depend on cursor position, focus, or DWM (which is why it's more
-    // portable across machines) — it keeps an input/message-driven engine's
+    // portable across machines) - it keeps an input/message-driven engine's
     // loop pumping even while occluded. Same position as the real cursor, so it
     // perturbs nothing the game reads.
     if (msg_on && cached_game_hwnd_ && IsWindow(cached_game_hwnd_)) {
@@ -783,7 +783,7 @@ void App::DriveIdleCaptureHz() {
 
     if (!dwm_poke_active_) {
         Log(NV3D::LogLevel::Info,
-            L"App::DriveIdleCaptureHz  start — every tick (~120Hz): "
+            L"App::DriveIdleCaptureHz  start - every tick (~120Hz): "
             L"power-throttle opt-out%s%s (game_hwnd=%p)",
             jiggle_on ? L" + cursor jiggle" : L"",
             msg_on    ? L" + game WM_MOUSEMOVE" : L"",
@@ -797,12 +797,12 @@ bool App::ComputeCaptureContentRect(RECT* out) const {
 
     // Follow the current foreground window, but ONLY when it's a genuine
     // external window (not one of ours, not the desktop shell). This is the
-    // whole "lock region follows alt+tab" behavior — and, just as important,
+    // whole "lock region follows alt+tab" behavior - and, just as important,
     // it's trap-proof: the instant focus lands on our control panel or the
     // desktop, this returns false and UpdateCursorLock frees the cursor, so
     // the user can always reclaim the pointer by tabbing to us or the desktop.
     // We deliberately do NOT fall back to the configured capture target when
-    // the foreground is ours — doing so would yank the cursor back into the
+    // the foreground is ours - doing so would yank the cursor back into the
     // game the moment the user restored our panel from the taskbar.
     HWND fg = GetForegroundWindow();
     if (!fg || !IsWindow(fg) || !IsWindowVisible(fg) || IsIconic(fg)) return false;
@@ -827,7 +827,7 @@ bool App::ComputeCaptureContentRect(RECT* out) const {
                      tl.y + (cr.bottom - cr.top) };
         return true;
     }
-    // Degenerate client rect (some borderless / off-screen windows) — fall
+    // Degenerate client rect (some borderless / off-screen windows) - fall
     // back to the outer window rect.
     RECT wr{};
     if (GetWindowRect(fg, &wr) && wr.right > wr.left && wr.bottom > wr.top) {
@@ -880,7 +880,7 @@ void App::RefreshSources() {
 void App::StartForceFocusWatcher(DWORD pid) {
     // Always drop any previous watcher first. Stop also JOINS, so we know the
     // old thread has released any AttachThreadInput pair before we spawn the
-    // new one — no two-watcher-at-once window.
+    // new one - no two-watcher-at-once window.
     StopForceFocusWatcher();
     if (pid == 0 || pid == GetCurrentProcessId()) return;
 
@@ -904,7 +904,7 @@ void App::StartForceFocusWatcher(DWORD pid) {
                 ForceFocusToGame(c.result);
             }
             // 1s tick split into 10×100ms so the stop flag is checked
-            // promptly — Ctrl+F8 to hide should silence the watcher within
+            // promptly - Ctrl+F8 to hide should silence the watcher within
             // a tenth of a second, not after a full second of yanking.
             for (int j = 0; j < 10; ++j) {
                 if (stop->load(std::memory_order_relaxed)) return;
@@ -919,7 +919,7 @@ void App::StopForceFocusWatcher() {
     // 100 ms sleep and around each ForceFocus iteration, so worst-case join
     // wait is bounded by one in-flight ForceFocusToGame call (~100 ms total:
     // two 50 ms sleeps plus the Win32 calls between AttachThreadInput TRUE
-    // and FALSE). Joining is critical for shutdown safety — see App.h for the
+    // and FALSE). Joining is critical for shutdown safety - see App.h for the
     // freeze-on-quit failure mode this prevents.
     if (focus_watcher_stop_) {
         focus_watcher_stop_->store(true, std::memory_order_relaxed);
@@ -931,7 +931,7 @@ void App::StopForceFocusWatcher() {
 }
 
 void App::EnterKatangaWaitingMode() {
-    // Fold back to Katanga's "waiting for producer" UI — and fully RELEASE
+    // Fold back to Katanga's "waiting for producer" UI - and fully RELEASE
     // the FSE session while we wait. Keeping the D3D9 stereo device alive-
     // but-minimized was the old design (fast re-reveal), but a lingering
     // fullscreen-exclusive stereo device contends with the next game's
@@ -943,7 +943,7 @@ void App::EnterKatangaWaitingMode() {
     StopForceFocusWatcher();
     fse_visible_ = false;
     // Drop every reference to the producer's texture BEFORE the FSE
-    // teardown modesets — same ordering as App::Stop. CaptureKatanga's ref
+    // teardown modesets - same ordering as App::Stop. CaptureKatanga's ref
     // would otherwise ride through the teardown, and the cached scaler SRV
     // would keep the cross-process allocation open on our device.
     if (auto* kat = dynamic_cast<CaptureKatanga*>(cap_.get())) {
@@ -955,7 +955,7 @@ void App::EnterKatangaWaitingMode() {
     // hours-long "gap ended".
     last_capture_frame_ts_ = {};
     producer_gap_logged_   = false;
-    // Keep the tracked producer handle while the process is still ALIVE — a
+    // Keep the tracked producer handle while the process is still ALIVE - a
     // resolution-change reconnect is the same process, and this handle is
     // the ONLY death signal we have: Geo-11 never zeroes the mapping slot,
     // and a dead producer's shared texture keeps serving its last frame at
@@ -979,7 +979,7 @@ void App::ReregisterHotkeys() {
     hotkeys_.Clear();
     // Only the two user-facing hotkeys are bound. Quit + show/hide control
     // panel are still reachable through the tray icon and the X button on
-    // the control panel itself — no global hotkey for them.
+    // the control panel itself - no global hotkey for them.
     settings_.hk_eyeswap.registered =
         hotkeys_.Register(kHKEyeSwap, settings_.hk_eyeswap.mods, settings_.hk_eyeswap.vk,
                           [this] { ToggleEyeSwap(); });
@@ -989,7 +989,7 @@ void App::ReregisterHotkeys() {
 }
 
 void App::Tick() {
-    // Device-removed watchdog — runs in EVERY state, ~4Hz. The Running-path
+    // Device-removed watchdog - runs in EVERY state, ~4Hz. The Running-path
     // checks below catch a TDR mid-session, but a reset while Idle (e.g.
     // another 3D Vision app engaging stereo and tripping the driver after
     // our Stop) previously left the control panel white forever: ImGui kept
@@ -1001,7 +1001,7 @@ void App::Tick() {
             ? renderer_.Device()->GetDeviceRemovedReason() : S_OK;
         if (rmv != S_OK) {
             Log(NV3D::LogLevel::Warning,
-                L"App::Tick  D3D11 device removed (hr=0x%08X) in state=%d — recovering",
+                L"App::Tick  D3D11 device removed (hr=0x%08X) in state=%d - recovering",
                 (unsigned)rmv, (int)state_);
             if (state_ == AppState::Running) {
                 presenter_.NotifyDeviceLost();
@@ -1011,7 +1011,7 @@ void App::Tick() {
             status_extra_ = L"GPU reset detected";
             if (renderer_.RecreateDevice()) {
                 state_ = AppState::Idle;
-                status_extra_ = L"GPU reset recovered — click Start to retry";
+                status_extra_ = L"GPU reset recovered - click Start to retry";
             }
         }
     }
@@ -1019,7 +1019,7 @@ void App::Tick() {
     // Track the last foreground process that isn't us and isn't the shell
     // (explorer owns the taskbar, so a taskbar click would otherwise poison
     // this). Runs in every state: the value matters at the Katanga reveal,
-    // but it's usually populated BEFORE Start — the user is in the game,
+    // but it's usually populated BEFORE Start - the user is in the game,
     // then clicks over to our panel and hits Start, and the first frame
     // reveals while our panel is still foreground.
     if (++fg_sample_counter_ >= 15) {   // ~every 120ms at 8ms ticks
@@ -1061,7 +1061,7 @@ void App::Tick() {
         // keeps the cross-process hold dropped for the entire hidden
         // period; the first resumed tick after restore re-imports and
         // re-evaluates producer-death / resolution-change state. The
-        // first-frame waiting state still polls — the popup is hidden
+        // first-frame waiting state still polls - the popup is hidden
         // there too, and TryAcquire is exactly how the reveal triggers.
         const bool katanga_paused =
             settings_.source_kind == SourceKind::Katanga &&
@@ -1069,7 +1069,7 @@ void App::Tick() {
 
         if (cap_ && katanga_paused) {
             // Deliberately idle: no acquire, no copy, no telemetry. But
-            // producer-DEATH detection must still run — a dead producer is
+            // producer-DEATH detection must still run - a dead producer is
             // otherwise silent (Geo-11 never zeroes the mapping slot, and
             // its shared texture keeps serving the last frame), so our FSE
             // stereo session would linger underneath until the next game
@@ -1077,20 +1077,20 @@ void App::Tick() {
             // wedge → TDR that killed the new game).
             if (tracked_process_handle_ &&
                 WaitForSingleObject(tracked_process_handle_, 0) == WAIT_OBJECT_0) {
-                // Same death grace as the visible path — see App.h.
+                // Same death grace as the visible path - see App.h.
                 const auto death_now = std::chrono::steady_clock::now();
                 if (producer_death_stop_at_.time_since_epoch().count() == 0) {
                     Log(NV3D::LogLevel::Info,
-                        L"App::Tick  Katanga producer exited while hidden — stopping "
+                        L"App::Tick  Katanga producer exited while hidden - stopping "
                         L"session after 1s driver-settle grace");
                     producer_death_stop_at_ = death_now + std::chrono::seconds(1);
                 } else if (death_now >= producer_death_stop_at_) {
                     producer_death_stop_at_ = {};
                     Log(NV3D::LogLevel::Info,
-                        L"App::Tick  producer-death grace elapsed — stopping session");
+                        L"App::Tick  producer-death grace elapsed - stopping session");
                     Stop();
                     ShowPanel();
-                    status_extra_ = L"game exited — click Start for the next session";
+                    status_extra_ = L"game exited - click Start for the next session";
                 }
             }
         } else if (cap_) {
@@ -1102,7 +1102,7 @@ void App::Tick() {
             if (cap_->TryAcquire(&src, &w, &h, &fmt) && src) {
                 // First Katanga frame: reveal the FSE popup AND hand focus
                 // to the producer's game window. We never resize staging or
-                // restart on dim differences — the renderer's scaler handles
+                // restart on dim differences - the renderer's scaler handles
                 // every size (upscaling when the producer is below display
                 // res, downscaling when above).
                 //
@@ -1113,12 +1113,12 @@ void App::Tick() {
                 // a process we don't know about up front, so we infer it
                 // from GetForegroundWindow at the moment of reveal (the
                 // common path: user clicked Start on us, then alt-tabbed /
-                // launched the game — game is foreground when its producer
+                // launched the game - game is foreground when its producer
                 // first publishes a frame). HidePanel + focus watcher mirrors
                 // the WGC path's hand-off so input keeps going to the game.
                 if (waiting_katanga_first_frame_) {
                     Log(NV3D::LogLevel::Info,
-                        L"App::Tick  first Katanga frame %ux%u (staging %ux%u) — revealing FSE",
+                        L"App::Tick  first Katanga frame %ux%u (staging %ux%u) - revealing FSE",
                         w, h, renderer_.StagingWidth(), renderer_.StagingHeight());
                     waiting_katanga_first_frame_ = false;
 
@@ -1129,7 +1129,7 @@ void App::Tick() {
                     // foreground game is the strongest signal, but in the
                     // COMMON flow the user has just clicked Start on our
                     // control panel, so the foreground at first-frame is
-                    // us — fall back to the last non-self, non-shell
+                    // us - fall back to the last non-self, non-shell
                     // foreground process (sampled near the top of Tick):
                     // that's the game they were in moments before.
                     DWORD hand_off_pid = 0;
@@ -1139,14 +1139,14 @@ void App::Tick() {
                     } else if (last_external_fg_pid_ != 0) {
                         hand_off_pid = last_external_fg_pid_;
                         Log(NV3D::LogLevel::Info,
-                            L"App::Tick  Katanga reveal: foreground is us — using last "
+                            L"App::Tick  Katanga reveal: foreground is us - using last "
                             L"external foreground pid=%lu as the game",
                             (unsigned long)hand_off_pid);
                     }
 
                     // Waiting mode fully releases the FSE session, so a
                     // reconnect reveal has to rebuild it. Note prev_fg was
-                    // captured BEFORE this — the FSE bring-up force-
+                    // captured BEFORE this - the FSE bring-up force-
                     // foregrounds the popup, which would make the game
                     // detection above see our own process.
                     if (!presenter_.IsActive()) {
@@ -1157,16 +1157,16 @@ void App::Tick() {
                         // tracked process lives (it never focus-steals), and
                         // the popup lifecycle here is app-driven. Passing 0
                         // would select the lib's legacy minimize-on-host-
-                        // focus-loss mode — the popup would vanish the
+                        // focus-loss mode - the popup would vanish the
                         // moment the game takes focus.
                         if (!presenter_.Init(renderer_.Device(), settings_,
                                              GetCurrentProcessId())) {
                             Log(NV3D::LogLevel::Error,
-                                L"App::Tick  reveal: presenter re-init failed — stopping session");
+                                L"App::Tick  reveal: presenter re-init failed - stopping session");
                             src->Release();
                             Stop();
                             state_ = AppState::SourceLost;
-                            status_extra_ = L"3D re-init failed — click Start to retry";
+                            status_extra_ = L"3D re-init failed - click Start to retry";
                             return;
                         }
                     }
@@ -1181,7 +1181,7 @@ void App::Tick() {
                             (unsigned long)hand_off_pid);
                         HidePanel();
                         // Pump so the panel hide's WM_KILLFOCUS lands before
-                        // the watcher starts yanking foreground around — same
+                        // the watcher starts yanking foreground around - same
                         // sequencing the WGC path uses.
                         MSG pump;
                         for (int i = 0; i < 3; ++i) {
@@ -1205,14 +1205,14 @@ void App::Tick() {
                         tracked_process_handle_ = OpenProcess(SYNCHRONIZE, FALSE, hand_off_pid);
                         if (!tracked_process_handle_) {
                             Log(NV3D::LogLevel::Warning,
-                                L"App::Tick  OpenProcess(SYNCHRONIZE, pid=%lu) failed err=%lu — "
+                                L"App::Tick  OpenProcess(SYNCHRONIZE, pid=%lu) failed err=%lu - "
                                 L"producer-death detection disabled this session",
                                 (unsigned long)hand_off_pid, GetLastError());
                         }
                     } else if (tracked_pid_ != 0 && tracked_process_handle_ &&
                                WaitForSingleObject(tracked_process_handle_, 0) ==
                                    WAIT_TIMEOUT) {
-                        // No game in the foreground at this reveal — typical
+                        // No game in the foreground at this reveal - typical
                         // for a resolution-change reconnect, where focus is
                         // in flux while the game rebuilds its swap chain.
                         // But we still track the producer from the previous
@@ -1226,14 +1226,14 @@ void App::Tick() {
                         StartForceFocusWatcher(tracked_pid_);
                     } else {
                         Log(NV3D::LogLevel::Info,
-                            L"App::Tick  Katanga reveal: no game foreground detected — "
+                            L"App::Tick  Katanga reveal: no game foreground detected - "
                             L"user will need to click the game window to give it focus");
                     }
                 }
 
                 // Late producer adoption: if we never identified the
                 // producer's process (its window wasn't foreground at the
-                // reveal), keep watching — whatever the user focuses while
+                // reveal), keep watching - whatever the user focuses while
                 // the 3D output is live is the game in practice. Without a
                 // process handle an Alt+F4'd producer is UNDETECTABLE (see
                 // the paused-branch comment above), and a wrong adoption
@@ -1250,14 +1250,14 @@ void App::Tick() {
                         fg_pid != 0 && fg_pid != GetCurrentProcessId();
                     if (candidate && fg_pid == adopt_candidate_pid_) {
                         // Same non-self process foreground on two probes in
-                        // a row (~1s) — adopt it as the producer.
+                        // a row (~1s) - adopt it as the producer.
                         tracked_process_handle_ =
                             OpenProcess(SYNCHRONIZE, FALSE, fg_pid);
                         if (tracked_process_handle_) {
                             tracked_pid_ = fg_pid;
                             Log(NV3D::LogLevel::Info,
                                 L"App::Tick  adopted foreground pid=%lu as Katanga "
-                                L"producer — death detection armed",
+                                L"producer - death detection armed",
                                 (unsigned long)fg_pid);
                         }
                         adopt_candidate_pid_ = 0;
@@ -1282,7 +1282,7 @@ void App::Tick() {
                 // IsLost usually means the GPU TDR'd (device removed). Tell
                 // NV3DLib BEFORE Stop() tears it down: the D3D9 device on
                 // the same adapter is gone too, and without the dead-mark
-                // its Shutdown takes the live path — Stereo_DestroyHandle +
+                // its Shutdown takes the live path - Stereo_DestroyHandle +
                 // COM Release into a wedged kernel driver can block forever.
                 if (renderer_.Device() &&
                     renderer_.Device()->GetDeviceRemovedReason() != S_OK) {
@@ -1293,22 +1293,22 @@ void App::Tick() {
                 status_extra_ = L"source closed";
                 // If the device was lost to a GPU TDR (the most common
                 // cause of CaptureKatanga IsLost) the ImGui DX11 backend is
-                // also pointing at a dead device — the control panel paints
+                // also pointing at a dead device - the control panel paints
                 // white until we rebuild it. Recover in place so the user
                 // doesn't have to relaunch.
                 if (renderer_.Device() &&
                     renderer_.Device()->GetDeviceRemovedReason() != S_OK) {
                     if (renderer_.RecreateDevice()) {
                         state_ = AppState::Idle;
-                        status_extra_ = L"GPU TDR recovered — click Start to retry";
+                        status_extra_ = L"GPU TDR recovered - click Start to retry";
                     }
                 }
             } else if (cap_->IsDisconnected()) {
                 // Katanga: producer went quiet past the grace window. Don't
-                // tear the session down — fold the UI back to "waiting" and
+                // tear the session down - fold the UI back to "waiting" and
                 // let the same CaptureKatanga re-detect the next producer.
                 Log(NV3D::LogLevel::Info,
-                    L"App::Tick  Katanga producer disconnected — returning to waiting state");
+                    L"App::Tick  Katanga producer disconnected - returning to waiting state");
                 EnterKatangaWaitingMode();
                 if (auto* kat = dynamic_cast<CaptureKatanga*>(cap_.get())) {
                     kat->ResetForReconnect();
@@ -1317,7 +1317,7 @@ void App::Tick() {
                        WaitForSingleObject(tracked_process_handle_, 0) == WAIT_OBJECT_0) {
                 // Producer game process exited. The mapping slot may still
                 // hold a stale handle (Geo-11 doesn't clear it on exit), so
-                // CaptureKatanga can't detect this on its own — we have to.
+                // CaptureKatanga can't detect this on its own - we have to.
                 // Full Stop rather than fold-to-waiting: staying armed means
                 // retrying OpenSharedResource on the dead game's stale
                 // handle at tick rate until the next producer publishes
@@ -1329,22 +1329,22 @@ void App::Tick() {
                 const auto death_now = std::chrono::steady_clock::now();
                 if (producer_death_stop_at_.time_since_epoch().count() == 0) {
                     Log(NV3D::LogLevel::Info,
-                        L"App::Tick  Katanga producer process exited — stopping session "
+                        L"App::Tick  Katanga producer process exited - stopping session "
                         L"after 1s driver-settle grace");
                     producer_death_stop_at_ = death_now + std::chrono::seconds(1);
                 } else if (death_now >= producer_death_stop_at_) {
                     producer_death_stop_at_ = {};
                     Log(NV3D::LogLevel::Info,
-                        L"App::Tick  producer-death grace elapsed — stopping session");
+                        L"App::Tick  producer-death grace elapsed - stopping session");
                     Stop();
                     ShowPanel();
-                    status_extra_ = L"game exited — click Start for the next session";
+                    status_extra_ = L"game exited - click Start for the next session";
                 }
             }
 
             // Producer-gap telemetry. Pins down what the "brief freeze"
             // actually is on the next repro: a gap here WITH an NV3DLib
-            // "GPU stall — fence wait took Nms" in the same window is a
+            // "GPU stall - fence wait took Nms" in the same window is a
             // device-wide GPU/driver stall; a gap with clean fence waits is
             // the producer (game) hitching on its own.
             {
@@ -1363,13 +1363,13 @@ void App::Tick() {
                            !producer_gap_logged_ &&
                            gap_now - last_capture_frame_ts_ > std::chrono::milliseconds(1000)) {
                     Log(NV3D::LogLevel::Warning,
-                        L"App::Tick  producer frame gap >1000ms (ongoing) — check for an "
+                        L"App::Tick  producer frame gap >1000ms (ongoing) - check for an "
                         L"NV3DLib GPU-stall line in the same window");
                     producer_gap_logged_ = true;
                 }
             }
         } else {
-            // No capture session — animate the test pattern so the user can
+            // No capture session - animate the test pattern so the user can
             // see the present loop is alive and verify per-eye stereo
             // independently of any capture issues.
             renderer_.FillTestPattern(test_pattern_frame_++);
@@ -1378,7 +1378,7 @@ void App::Tick() {
 
         // 3D cursor: composite a reticle into the freshly-written staging slot
         // at the mouse's position within the captured content. Only on a dirty
-        // frame — the copy above fully overwrote the slot, so the reticle lands
+        // frame - the copy above fully overwrote the slot, so the reticle lands
         // on clean content with no accumulation; on a heartbeat-only present
         // the previous frame's reticle is still baked in, which is fine for an
         // idle source. Uses the content rect UpdateCursorLock cached this Tick.
@@ -1405,14 +1405,14 @@ void App::Tick() {
         //     we've stopped and dropping stereo if the captured source is
         //     ever idle for a while)
         //
-        // Skip entirely while the FSE popup is hidden via Ctrl+F8 — some
+        // Skip entirely while the FSE popup is hidden via Ctrl+F8 - some
         // drivers block PresentEx on an OCCLUDED device window and wedge
         // the main loop + GUI with it.
         //
         // The reason this matters: NV3DLib's worker takes ~16.67ms per
         // PresentEx (one vsync for the L+R pair at 120Hz frame-sequential).
         // At our 8ms tick rate, presenting every tick spam-submits to a
-        // worker that drops anything that can't be queued within 8ms — and
+        // worker that drops anything that can't be queued within 8ms - and
         // each redundant Present is GPU work that competes with the captured
         // 30fps source. That competition starved the source of GPU time so
         // it couldn't hit 30fps, which read as "slow motion" downstream.
@@ -1422,16 +1422,16 @@ void App::Tick() {
 
         if (want_present && renderer_.Staging()) {
             // Catch D3D11 device-removed before handing the frame to NV3DLib
-            // — fence Signal / scaler Draw / CopyResource will all fail
+            // - fence Signal / scaler Draw / CopyResource will all fail
             // immediately on a dead device, and feeding NV3DLib a dead
             // device cascades into D3D9 device-hung / PresentEx-failed log
             // spam and a white control panel before we manage to Stop.
             HRESULT rmv = renderer_.Device() ? renderer_.Device()->GetDeviceRemovedReason() : S_OK;
             if (rmv != S_OK) {
                 Log(NV3D::LogLevel::Warning,
-                    L"App::Tick  D3D11 device removed (hr=0x%08X) — stopping + rebuilding device",
+                    L"App::Tick  D3D11 device removed (hr=0x%08X) - stopping + rebuilding device",
                     (unsigned)rmv);
-                // Same-adapter D3D9 device is gone too — force the dead-path
+                // Same-adapter D3D9 device is gone too - force the dead-path
                 // teardown before Stop() releases NV3DLib.
                 presenter_.NotifyDeviceLost();
                 Stop();
@@ -1439,7 +1439,7 @@ void App::Tick() {
                 status_extra_ = L"D3D11 device removed";
                 if (renderer_.RecreateDevice()) {
                     state_ = AppState::Idle;
-                    status_extra_ = L"GPU TDR recovered — click Start to retry";
+                    status_extra_ = L"GPU TDR recovered - click Start to retry";
                 }
             } else {
                 const HRESULT phr = presenter_.SubmitFrame(renderer_.Staging());
@@ -1447,7 +1447,7 @@ void App::Tick() {
                 last_present_ts_ = now;
                 // Presenter-death watchdog (see App.h). A single failure can
                 // be a one-off (the async worker reports the PREVIOUS
-                // frame's result, so one bad frame surfaces once) — a
+                // frame's result, so one bad frame surfaces once) - a
                 // sustained streak means the D3D9 side is dead while D3D11
                 // is fine, and nothing else will ever notice.
                 if (FAILED(phr)) {
@@ -1458,14 +1458,14 @@ void App::Tick() {
                             (now - last_presenter_dead_recovery_) < std::chrono::seconds(10);
                         last_presenter_dead_recovery_ = now;
                         Log(NV3D::LogLevel::Warning,
-                            L"App::Tick  presenter dead (Present hr=0x%08X for 40 frames) — %s",
+                            L"App::Tick  presenter dead (Present hr=0x%08X for 40 frames) - %s",
                             (unsigned)phr,
                             recent ? L"second failure within 10s, stopping session"
                                    : L"rebuilding FSE session");
                         presenter_.NotifyDeviceLost();
                         if (!recent && settings_.source_kind == SourceKind::Katanga) {
                             // Producer is alive (its death has its own
-                            // detection path) — fold to waiting; the reveal
+                            // detection path) - fold to waiting; the reveal
                             // machinery re-Inits the presenter and refocuses
                             // the game on the next captured frame.
                             EnterKatangaWaitingMode();
@@ -1476,7 +1476,7 @@ void App::Tick() {
                             Stop();
                             ShowPanel();
                             state_ = AppState::SourceLost;
-                            status_extra_ = L"3D output device hung — click Start to retry";
+                            status_extra_ = L"3D output device hung - click Start to retry";
                         }
                     }
                 } else {
@@ -1488,7 +1488,7 @@ void App::Tick() {
         // Diagnostic periodic device-state ping. Gated on NV3D_GLASS_D3D11_DEBUG=1
         // so normal users don't get spam. Helps spot a slow device degradation
         // (partial removal, increasing per-frame latency) before the explicit
-        // TDR-detection paths fire — by then the device is already gone.
+        // TDR-detection paths fire - by then the device is already gone.
         if (++diag_periodic_counter_ >= 30) {
             diag_periodic_counter_ = 0;
             static const bool diag_on = []() {
@@ -1549,7 +1549,7 @@ void App::Tick() {
     // → Present on the panel's swap chain every tick (so 120+ times per
     // second), all of which is GPU+CPU work for a window the user can't see.
     //
-    // Use IsIconic(hwnd_) — i.e. the real Win32 minimized state — instead
+    // Use IsIconic(hwnd_) - i.e. the real Win32 minimized state - instead
     // of our cached panel_visible_ flag. The cached flag only tracks
     // explicit Show/HidePanel calls; it doesn't update when the user
     // un-minimizes the window from the taskbar, so we'd stay frozen on the
@@ -1580,7 +1580,7 @@ LRESULT CALLBACK App::StaticWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 LRESULT App::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     // Let ImGui see input first.
     if (ImGui_ImplWin32_WndProcHandler(hwnd, msg, wp, lp)) {
-        // ImGui consumed (typed text into a focused widget, etc.) — fall
+        // ImGui consumed (typed text into a focused widget, etc.) - fall
         // through anyway for messages we still need to react to.
     }
 
@@ -1607,7 +1607,7 @@ LRESULT App::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             PostQuitMessage(0);
             return 0;
         // ---- TDR-investigation probes ----
-        // We log these on every receipt (cheap — Windows only sends them on
+        // We log these on every receipt (cheap - Windows only sends them on
         // real display config changes) so a TDR-correlated re-enumeration
         // shows up plainly in the log near the device-removed cascade.
         case WM_DISPLAYCHANGE:

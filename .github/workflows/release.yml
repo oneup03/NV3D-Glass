@@ -12,7 +12,7 @@ on:
       - '.github/workflows/release.yml'
   workflow_dispatch:
 
-# Cancel in-flight runs of the same workflow on the same branch — only the
+# Cancel in-flight runs of the same workflow on the same branch - only the
 # newest commit's artifact matters for a "latest" pre-release.
 concurrency:
   group: build-and-prerelease-${{ github.ref }}

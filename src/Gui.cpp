@@ -213,7 +213,7 @@ void Gui::DrawCaptureSourceSection(App& app) {
         }
     } else if (s.source_kind == SourceKind::Katanga) {
         ImGui::TextDisabled("Listens on Local\\KatangaMappedFile.");
-        ImGui::TextDisabled("Producer can launch before or after Start — we'll wait.");
+        ImGui::TextDisabled("Producer can launch before or after Start - we'll wait.");
     }
 
     if (ImGui::Button("Refresh sources")) RefreshSources();
@@ -245,7 +245,7 @@ void Gui::DrawCaptureSourceSection(App& app) {
                 "(~120Hz) to keep its render loop pumping, plus the power-throttle\n"
                 "opt-out. Gentler (no global cursor motion) and more portable\n"
                 "across machines, but only helps games that idle on lack of input\n"
-                "— not the WGC DWM-sampling floor.");
+                "- not the WGC DWM-sampling floor.");
         }
     }
 }
@@ -312,13 +312,13 @@ void Gui::DrawOutputSection(App& app) {
     const bool fse_alive = app.presenter().IsActive()
                         || app.state() == AppState::Running;
 
-    // One Start/Stop toggle button — label changes with state.
+    // One Start/Stop toggle button - label changes with state.
     if (ImGui::Button(fse_alive ? "Stop" : "Start", ImVec2(120, 32))) {
         if (fse_alive) app.Stop();
         else           app.Start();
     }
     ImGui::SameLine();
-    // Mirrors Ctrl+F8 — re-show the FSE popup (and re-spawn the ForceFocus
+    // Mirrors Ctrl+F8 - re-show the FSE popup (and re-spawn the ForceFocus
     // watcher so the game gets foreground back). Toggles: press again or
     // Ctrl+F8 to hide.
     if (!fse_alive) ImGui::BeginDisabled();

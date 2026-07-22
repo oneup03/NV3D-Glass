@@ -45,7 +45,7 @@ bool Renderer::CreateD3D() {
     UINT create_flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
     // D3D11 debug layer: ON by default. Set NV3D_GLASS_D3D11_DEBUG=0 to
     // disable. When enabled, every D3D11 driver validation warning / error
-    // is routed to OutputDebugString — view with sysinternals DebugView.
+    // is routed to OutputDebugString - view with sysinternals DebugView.
     // Most useful right before a GPU TDR, where the layer usually prints
     // the underlying API misuse that the driver is about to fault on.
     // Comes with a perf cost; if missing SDK Layers package, we fall back
@@ -65,12 +65,12 @@ bool Renderer::CreateD3D() {
         create_flags,
         fls, _countof(fls), D3D11_SDK_VERSION,
         &d3d_, &fl, &ctx_);
-    // If the SDK layers DLL is missing the call fails with E_FAIL — fall
+    // If the SDK layers DLL is missing the call fails with E_FAIL - fall
     // back to a non-debug create so we don't accidentally brick the app on
     // a machine without the SDK installed.
     if (FAILED(hr) && (create_flags & D3D11_CREATE_DEVICE_DEBUG)) {
         Log(NV3D::LogLevel::Warning,
-            L"Renderer::CreateD3D  D3D11_CREATE_DEVICE_DEBUG failed hr=0x%08X — "
+            L"Renderer::CreateD3D  D3D11_CREATE_DEVICE_DEBUG failed hr=0x%08X - "
             L"SDK layers missing? Retrying without debug flag", (unsigned)hr);
         create_flags &= ~D3D11_CREATE_DEVICE_DEBUG;
         hr = D3D11CreateDevice(
@@ -148,7 +148,7 @@ bool Renderer::RecreateDevice() {
     }
 
     // Release every D3D11 resource we own. Scaler shaders + sampler/blend/
-    // rasterizer state too — they're device-bound; the next scaler call will
+    // rasterizer state too - they're device-bound; the next scaler call will
     // rebuild them via InitScaler.
     ReleaseStaging();
     rtv_.Reset();
@@ -197,7 +197,7 @@ bool Renderer::RecreateDevice() {
 
 void Renderer::Shutdown() {
     // Step-by-step logs so a freeze in any one release pinpoints itself.
-    // Same rationale as App::Shutdown's checkpoints — the freeze on quit
+    // Same rationale as App::Shutdown's checkpoints - the freeze on quit
     // goes silent through this path; we need to know which step blocks.
     if (imgui_init_) {
         ImGui_ImplDX11_Shutdown();
@@ -246,7 +246,7 @@ void Renderer::EndImGuiFrame() {
     }
     // Present(0, 0) instead of Present(1, 0): no vsync block on the control-
     // panel swap chain. The 1-vsync wait per tick was eating ~8ms of CPU
-    // every Tick whether or not anything moved in the GUI — that's GPU+CPU
+    // every Tick whether or not anything moved in the GUI - that's GPU+CPU
     // time the captured source could be using.
     if (swap_) swap_->Present(0, 0);
 }
@@ -280,7 +280,7 @@ bool Renderer::CreateFixedStaging(UINT w, UINT h) {
     staging_w_   = w;
     staging_h_   = h;
     Log(NV3D::LogLevel::Info,
-        L"Renderer: staging ring created — %u x %ux%u BGRA8 MISC_SHARED", kStagingRing, w, h);
+        L"Renderer: staging ring created - %u x %ux%u BGRA8 MISC_SHARED", kStagingRing, w, h);
     return true;
 }
 
@@ -303,7 +303,7 @@ bool Renderer::CopyCaptureToStaging(ID3D11Texture2D* src) {
         sd.Format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB ||
         sd.Format == DXGI_FORMAT_B8G8R8A8_TYPELESS;
     if (sd.Width == staging_w_ && sd.Height == staging_h_ && format_ok) {
-        // Dim+format-match fast path — no shader needed.
+        // Dim+format-match fast path - no shader needed.
         ctx_->CopyResource(staging_[staging_idx_].Get(), src);
         return true;
     }
@@ -314,7 +314,7 @@ bool Renderer::CopyCaptureRegionToStaging(ID3D11Texture2D* src, const RECT& src_
     if (!ctx_ || !staging_[0] || !src) return false;
     const LONG box_w = src_box.right  - src_box.left;
     const LONG box_h = src_box.bottom - src_box.top;
-    // Delegate BEFORE advancing — CopyCaptureToStaging advances itself.
+    // Delegate BEFORE advancing - CopyCaptureToStaging advances itself.
     if (box_w <= 0 || box_h <= 0) return CopyCaptureToStaging(src);
     AdvanceStaging();
 
@@ -342,7 +342,7 @@ bool Renderer::CopyCaptureRegionToStaging(ID3D11Texture2D* src, const RECT& src_
         return true;
     }
 
-    // Box dim doesn't match staging — fall through to the scaler. The scaler
+    // Box dim doesn't match staging - fall through to the scaler. The scaler
     // currently samples src whole-image; cropping via UV would be a nicer
     // extension but isn't needed for the common case where staging is sized
     // to match the client area at session start.
@@ -365,7 +365,7 @@ VSOut main(uint vid : SV_VertexID) {
 )";
 
 // Pixel shader: bilinear sample the source at the staging UV. The source can
-// be any aspect / resolution — the sample naturally stretches it to fill the
+// be any aspect / resolution - the sample naturally stretches it to fill the
 // staging texture.
 constexpr const char* kScalePS = R"(
 Texture2D    g_src : register(t0);
@@ -417,7 +417,7 @@ bool Renderer::InitScaler() {
 }
 
 bool Renderer::ScaleCaptureToStaging(ID3D11Texture2D* src) {
-    // NOTE: no AdvanceStaging() here — this is a fallback stage invoked by
+    // NOTE: no AdvanceStaging() here - this is a fallback stage invoked by
     // the public entry points, which have already advanced the ring.
     if (!InitScaler() || !staging_rtv_[staging_idx_]) return false;
 
@@ -627,7 +627,7 @@ bool Renderer::DrawStereoCursor(float u, float v, float parallax_frac) {
     const float W     = static_cast<float>(staging_w_);
     const float H     = static_cast<float>(staging_h_);
     const float halfW = W * 0.5f;
-    // Arrow size in staging pixels — proportional to staging height so it's a
+    // Arrow size in staging pixels - proportional to staging height so it's a
     // consistent visual size across source resolutions, clamped to a sane
     // pointer size. Width follows the bitmap's aspect ratio.
     float ch_px = H * 0.035f;
@@ -753,7 +753,7 @@ void Renderer::ReleaseStaging() {
     staging_idx_ = 0;
     staging_w_ = 0;
     staging_h_ = 0;
-    // Drop the cached scaler SRV — the source pointer was tied to the prior
+    // Drop the cached scaler SRV - the source pointer was tied to the prior
     // capture session; next session's first scaler call will recreate it.
     InvalidateScalerCache();
 }
