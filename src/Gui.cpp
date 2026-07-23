@@ -299,7 +299,8 @@ void Gui::DrawOutputSection(App& app) {
     ImGui::Checkbox("Draw 3D cursor", &s.draw_3d_cursor);
     if (s.draw_3d_cursor) {
         ImGui::SliderFloat("Cursor depth", &s.cursor_parallax, -0.05f, 0.05f, "%.3f");
-        ImGui::TextDisabled("(0 = screen plane; the OS cursor never appears in the 3D view)");
+        ImGui::SliderInt("Cursor size", &s.cursor_size, 12, 96, "%d px");
+        ImGui::TextDisabled("(0 depth = screen plane; the OS cursor never appears in the 3D view)");
     }
 
     ImGui::Spacing();

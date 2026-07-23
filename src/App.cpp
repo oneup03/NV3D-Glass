@@ -1376,12 +1376,13 @@ void App::Tick() {
             staging_dirty = true;
         }
 
-        // 3D cursor: composite a reticle into the freshly-written staging slot
-        // at the mouse's position within the captured content. Only on a dirty
-        // frame - the copy above fully overwrote the slot, so the reticle lands
-        // on clean content with no accumulation; on a heartbeat-only present
-        // the previous frame's reticle is still baked in, which is fine for an
-        // idle source. Uses the content rect UpdateCursorLock cached this Tick.
+        // 3D cursor: composite the arrow pointer into the freshly-written
+        // staging slot at the mouse's position within the captured content.
+        // Only on a dirty frame - the copy above fully overwrote the slot, so
+        // the arrow lands on clean content with no accumulation; on a
+        // heartbeat-only present the previous frame's arrow is still baked in,
+        // which is fine for an idle source. Uses the content rect
+        // UpdateCursorLock cached this Tick.
         if (settings_.draw_3d_cursor && fse_visible_ && staging_dirty &&
             last_content_valid_ && renderer_.Staging()) {
             POINT cp{};
@@ -1393,7 +1394,8 @@ void App::Tick() {
                     const float u = (cp.x - r.left) / rw;
                     const float v = (cp.y - r.top)  / rh;
                     if (u >= 0.0f && u <= 1.0f && v >= 0.0f && v <= 1.0f) {
-                        renderer_.DrawStereoCursor(u, v, settings_.cursor_parallax);
+                        renderer_.DrawStereoCursor(u, v, settings_.cursor_parallax,
+                                                   settings_.cursor_size);
                     }
                 }
             }

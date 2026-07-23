@@ -37,8 +37,9 @@ binary is self-contained - no installer.
 4. Click **Start**. The control panel minimises and a click-through FSE
    popup appears on the 3D Vision display. Put on the shutter glasses;
    you should see stereo separation.
-5. Click the taskbar icon (or press **Ctrl+F8**) to bring the control
-   panel back. Click **Stop** to tear down the 3D output cleanly.
+5. Click the taskbar icon (or right-click the tray icon -> Show panel) to
+   bring the control panel back. Press **Ctrl+F8** to hide / re-show the 3D
+   output without stopping. Click **Stop** to tear down the 3D output cleanly.
 
 ## Hotkeys
 
@@ -58,8 +59,8 @@ button quits the app (and tears down the FSE popup cleanly).
 ## Settings & log
 
 - `NV3D-Glass.ini` (next to the .exe) - picked source, output monitor,
-  eye-swap, LightBoost / Driver Fix toggles, hotkey bindings, panel
-  geometry.
+  eye-swap, LightBoost / Driver Fix toggles, cursor lock / 3D cursor
+  settings, hotkey bindings, panel geometry.
 - `NV3D-Glass.log` (next to the .exe) - all `[NV3D]` messages from the
   presenter + suppressor + LightBoost subsystems, plus app-level
   start/stop/shutdown checkpoints. First file to attach when reporting
@@ -78,6 +79,20 @@ button quits the app (and tears down the FSE popup cleanly).
 - **Click-through FSE popup**: the 3D output window is `WS_EX_LAYERED |
   WS_EX_TRANSPARENT` - mouse clicks pass through to whatever is
   underneath, so you can interact with the captured game without alt-tab.
+- **Lock cursor to captured window** (control panel toggle): while the 3D
+  output is showing, clips the mouse to the focused window's client area so
+  mouse-look games don't let the pointer wander onto the desktop or another
+  monitor. The clip region follows whichever external window has focus, so
+  alt+tabbing updates it - and focusing the control panel or the desktop
+  frees the pointer, so it can never trap you. Only active while the FSE
+  popup is visible; released on Stop / hide (Ctrl+F8) / quit.
+- **Draw 3D cursor** (control panel toggle): draws a folded stereo arrow
+  pointer into the 3D output at the mouse's position within the captured
+  content. Because the captured frame never contains the OS cursor, this is
+  the only pointer the 3D view can show. `Cursor depth` sets its parallax
+  (0 = screen plane; +/- pushes it behind / in front), and `Cursor size`
+  sets its height in pixels. Uses the same navigation-arrow shape as
+  [3DVision4All](https://github.com/oneup03/3DVision4All).
 - **Monitor capture caveat**: if you pick the *same* monitor as both
   source and output, the app refuses to start (would feed back into
   itself). Use Window capture instead, or pick a different display.
@@ -129,4 +144,6 @@ LGPL-2.1-or-later. See SPDX headers on individual source files and the
   modern producer for the Katanga protocol; we consume what it publishes
 - [VRScreenCap](https://github.com/artumino/VRScreenCap) - prior art for the
   Katanga shared-memory consumer pattern
+- [3DVision4All](https://github.com/oneup03/3DVision4All) - reference for the
+  folded stereo navigation-arrow cursor shape
 - [Dear ImGui](https://github.com/ocornut/imgui) - control panel UI

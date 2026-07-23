@@ -163,9 +163,6 @@ bool Renderer::RecreateDevice() {
     cursor_blend_.Reset();
     cursor_rs_.Reset();
     cursor_cb_.Reset();
-    cursor_tex_.Reset();
-    cursor_srv_.Reset();
-    cursor_samp_.Reset();
     cursor_ready_ = false;
     swap_.Reset();
     ctx_.Reset();
@@ -478,59 +475,92 @@ bool Renderer::ScaleCaptureToStaging(ID3D11Texture2D* src) {
 
 namespace {
 
-// A vertexless quad (triangle strip, 4 verts) per eye that samples the baked
-// arrow bitmap. The constant buffer carries the quad's clip-space rectangle
-// (left/top/right/bottom); UVs span [0,1] so the arrow's top-left tip (its
-// hotspot) lands at the quad's top-left corner.
+// Range of arrow-space coordinate `p` spanned by the drawn quad. The arrow
+// silhouette lives in p in [0, ~0.97] (tip at 0, wings near 1); the outline
+// enlarges it by 1.32x and the anti-aliasing jitter reaches a little further,
+// so the quad is padded to cover the whole mark. MUST match the PMIN/PMAX
+// literals baked into kCursorVS below.
+constexpr float kCursorPMin = -0.15f;
+constexpr float kCursorPMax =  1.35f;
+
+// Vertexless quad (triangle strip, 4 verts) per eye. The constant buffer holds
+// the quad's clip-space rectangle; the VS also emits the per-pixel arrow-space
+// coordinate `p` (tip at 0,0, body toward +x/+y) that the pixel shader draws
+// the folded navigation arrow in.
 constexpr const char* kCursorVS = R"(
 cbuffer CursorCB : register(b0) {
     float4 rect;   // x = left, y = top, z = right, w = bottom (clip space)
 };
-struct VSOut { float4 pos : SV_Position; float2 uv : TEXCOORD0; };
+struct VSOut { float4 pos : SV_Position; float2 p : TEXCOORD0; };
 VSOut main(uint vid : SV_VertexID) {
     float2 c = float2((vid & 1) ? 1.0 : 0.0, (vid & 2) ? 1.0 : 0.0);
     VSOut o;
-    o.uv  = c;
+    // Keep these two literals in sync with kCursorPMin / kCursorPMax (C++).
+    o.p   = float2(lerp(-0.15, 1.35, c.x), lerp(-0.15, 1.35, c.y));
     o.pos = float4(lerp(rect.x, rect.z, c.x), lerp(rect.y, rect.w, c.y), 0.0, 1.0);
     return o;
 }
 )";
 
+// Folded 3D navigation arrow - the same shape/shading 3DVision4All (and UEVR-3D)
+// use for their stereo software cursor (see 3DVision4All/include/CursorShaderHLSL.h).
+// Ported verbatim except the final composite: 3DVision4All blends over a sampled
+// base inside a fullscreen compose pass; here we draw into the SbS staging with
+// a hardware alpha-over blend, so we emit the arrow PREMULTIPLIED (rgb, a) which
+// reproduces their two-layer (dark outline, then facet fill) composite exactly:
+//   final = base*(1-outline)*(1-fill) + [dark*outline*(1-fill) + fill*fill_col]
+// => src.a = 1-(1-outline)*(1-fill), src.rgb = dark*outline*(1-fill)+fill*fill_col.
 constexpr const char* kCursorPS = R"(
-Texture2D    g_cursor : register(t0);
-SamplerState g_smp    : register(s0);
-struct VSOut { float4 pos : SV_Position; float2 uv : TEXCOORD0; };
+float cursor_cross2(float2 a, float2 b) { return a.x * b.y - a.y * b.x; }
+bool cursor_in_tri(float2 p, float2 a, float2 b, float2 c) {
+    float c1 = cursor_cross2(b - a, p - a);
+    float c2 = cursor_cross2(c - b, p - b);
+    float c3 = cursor_cross2(a - c, p - c);
+    return (c1 <= 0.0 && c2 <= 0.0 && c3 <= 0.0) || (c1 >= 0.0 && c2 >= 0.0 && c3 >= 0.0);
+}
+static const float2 kNavTip   = float2(0.0,     0.0);
+static const float2 kNavNotch = float2(0.495,   0.495);
+static const float2 kNavWingL = float2(0.375,   0.969);
+static const float2 kNavWingR = float2(0.969,   0.375);
+static const float2 kNavAxis  = float2(0.70711, 0.70711);
+static const float2 kNavPerp  = float2(-0.70711, 0.70711);
+bool cursor_nav_any(float2 p) {
+    return cursor_in_tri(p, kNavTip, kNavWingL, kNavNotch)
+        || cursor_in_tri(p, kNavTip, kNavNotch, kNavWingR);
+}
+struct VSOut { float4 pos : SV_Position; float2 p : TEXCOORD0; };
 float4 main(VSOut i) : SV_Target {
-    return g_cursor.Sample(g_smp, i.uv);
+    float2 p = i.p;
+    if (p.x < -0.4 || p.x > 1.5 || p.y < -0.4 || p.y > 1.5) discard;
+    float2 fw  = fwidth(p);
+    float  pxu = max(max(fw.x, fw.y), 1e-5);
+    const float2 J[4] = { float2(0.125, 0.375), float2(0.375, -0.125),
+                          float2(-0.125, -0.375), float2(-0.375, 0.125) };
+    float fill = 0.0, edge = 0.0;
+    [unroll]
+    for (int k = 0; k < 4; ++k) {
+        float2 s = p + J[k] * (pxu * 2.0);
+        if (cursor_nav_any(s))                fill += 0.25;
+        if (cursor_nav_any(s * (1.0 / 1.32))) edge += 0.25;
+    }
+    float outline = saturate(edge - fill);
+    // Two-facet shading + crease highlight for the folded look.
+    float side  = dot(p, kNavPerp);
+    float axial = dot(p, kNavAxis);
+    float crease = saturate(1.0 - abs(side) / 0.42)
+                 * smoothstep(0.0, 0.18, axial) * (1.0 - smoothstep(0.62, 0.95, axial));
+    float t  = saturate(abs(side) * 2.4);
+    float vv = saturate(axial / 0.95);
+    float shade = ((side > 0.0) ? 0.98 : 0.80) - 0.10 * t - 0.12 * vv;
+    shade = saturate(shade + smoothstep(0.06, 0.0, abs(side)) * crease * 0.12);
+    float3 fill_col = float3(shade, shade, shade);
+    float3 dark     = float3(0.03, 0.03, 0.03);
+    float  a = 1.0 - (1.0 - outline) * (1.0 - fill);
+    if (a <= 0.0) discard;
+    float3 premult = dark * outline * (1.0 - fill) + fill_col * fill;
+    return float4(premult, a);
 }
 )";
-
-// Classic arrow pointer, 12x19, hotspot at the top-left tip (0,0). 'X' = black
-// outline, '.' = white fill, ' ' = transparent. Same silhouette Windows /
-// ImGui use for the default arrow so it reads as a normal mouse cursor.
-constexpr const char* kArrowRows[] = {
-    "X           ",
-    "XX          ",
-    "X.X         ",
-    "X..X        ",
-    "X...X       ",
-    "X....X      ",
-    "X.....X     ",
-    "X......X    ",
-    "X.......X   ",
-    "X........X  ",
-    "X.........X ",
-    "X......XXXXX",
-    "X...X..X    ",
-    "X..X X..X   ",
-    "X.X  X..X   ",
-    "XX    X..X  ",
-    "X      X..X ",
-    "        X..X",
-    "         XX ",
-};
-constexpr UINT kArrowW = 12;
-constexpr UINT kArrowH = 19;
 
 }  // anonymous
 
@@ -554,14 +584,13 @@ bool Renderer::InitCursor() {
     rd.DepthClipEnable = TRUE;
     if (FAILED(d3d_->CreateRasterizerState(&rd, &cursor_rs_))) return false;
 
-    // Standard straight-alpha over blend so the arrow composites onto the
-    // captured content. Transparent texels (alpha 0) don't touch the frame;
-    // white fill / black outline (alpha 1) overwrite it. Leave the staging
-    // alpha channel untouched (NV3DLib's D3D9 import ignores it, but don't
-    // gratuitously stomp it).
+    // Premultiplied-alpha over blend: the pixel shader outputs premultiplied
+    // rgb + coverage alpha, so SrcBlend=ONE. Reproduces 3DVision4All's layered
+    // (outline-then-fill) composite in a single draw. Leave the staging alpha
+    // channel untouched (NV3DLib's D3D9 import ignores it).
     D3D11_BLEND_DESC bd{};
     bd.RenderTarget[0].BlendEnable           = TRUE;
-    bd.RenderTarget[0].SrcBlend              = D3D11_BLEND_SRC_ALPHA;
+    bd.RenderTarget[0].SrcBlend              = D3D11_BLEND_ONE;
     bd.RenderTarget[0].DestBlend             = D3D11_BLEND_INV_SRC_ALPHA;
     bd.RenderTarget[0].BlendOp               = D3D11_BLEND_OP_ADD;
     bd.RenderTarget[0].SrcBlendAlpha         = D3D11_BLEND_ZERO;
@@ -579,61 +608,25 @@ bool Renderer::InitCursor() {
     cbd.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
     if (FAILED(d3d_->CreateBuffer(&cbd, nullptr, &cursor_cb_))) return false;
 
-    // Bake the arrow ASCII art into a BGRA8 texture. Values are little-endian
-    // 0xAARRGGBB: black-opaque, white-opaque, fully transparent.
-    std::vector<uint32_t> px(static_cast<size_t>(kArrowW) * kArrowH, 0u);
-    for (UINT y = 0; y < kArrowH; ++y) {
-        for (UINT x = 0; x < kArrowW; ++x) {
-            const char ch = kArrowRows[y][x];
-            uint32_t   v  = 0x00000000u;         // transparent
-            if      (ch == 'X') v = 0xFF000000u; // black outline
-            else if (ch == '.') v = 0xFFFFFFFFu; // white fill
-            px[static_cast<size_t>(y) * kArrowW + x] = v;
-        }
-    }
-    D3D11_TEXTURE2D_DESC td{};
-    td.Width            = kArrowW;
-    td.Height           = kArrowH;
-    td.MipLevels        = 1;
-    td.ArraySize        = 1;
-    td.Format           = DXGI_FORMAT_B8G8R8A8_UNORM;
-    td.SampleDesc.Count = 1;
-    td.Usage            = D3D11_USAGE_IMMUTABLE;
-    td.BindFlags        = D3D11_BIND_SHADER_RESOURCE;
-    D3D11_SUBRESOURCE_DATA srd{};
-    srd.pSysMem     = px.data();
-    srd.SysMemPitch = kArrowW * 4u;
-    if (FAILED(d3d_->CreateTexture2D(&td, &srd, &cursor_tex_)))                 return false;
-    if (FAILED(d3d_->CreateShaderResourceView(cursor_tex_.Get(), nullptr, &cursor_srv_))) return false;
-
-    D3D11_SAMPLER_DESC sd{};
-    sd.Filter         = D3D11_FILTER_MIN_MAG_MIP_LINEAR;   // smooth edges when upscaled
-    sd.AddressU       = D3D11_TEXTURE_ADDRESS_CLAMP;
-    sd.AddressV       = D3D11_TEXTURE_ADDRESS_CLAMP;
-    sd.AddressW       = D3D11_TEXTURE_ADDRESS_CLAMP;
-    sd.ComparisonFunc = D3D11_COMPARISON_NEVER;
-    sd.MinLOD         = 0;
-    sd.MaxLOD         = D3D11_FLOAT32_MAX;
-    if (FAILED(d3d_->CreateSamplerState(&sd, &cursor_samp_))) return false;
-
     cursor_ready_ = true;
     return true;
 }
 
-bool Renderer::DrawStereoCursor(float u, float v, float parallax_frac) {
+bool Renderer::DrawStereoCursor(float u, float v, float parallax_frac, int arrow_px) {
     if (!InitCursor() || !ctx_ || staging_w_ == 0 || staging_h_ == 0) return false;
     if (!staging_rtv_[staging_idx_]) return false;
 
     const float W     = static_cast<float>(staging_w_);
     const float H     = static_cast<float>(staging_h_);
     const float halfW = W * 0.5f;
-    // Arrow size in staging pixels - proportional to staging height so it's a
-    // consistent visual size across source resolutions, clamped to a sane
-    // pointer size. Width follows the bitmap's aspect ratio.
-    float ch_px = H * 0.035f;
-    if (ch_px < 18.0f) ch_px = 18.0f;
-    if (ch_px > 48.0f) ch_px = 48.0f;
-    const float cw_px = ch_px * (static_cast<float>(kArrowW) / static_cast<float>(kArrowH));
+    // `arrow_px` (3DVision4All's cursor_size) is the arrow height in staging
+    // pixels, i.e. the pixel span of one p-unit. The quad covers the padded
+    // p-range [kCursorPMin, kCursorPMax] with the hotspot (p=0) at the mouse.
+    float unit = static_cast<float>(arrow_px);
+    if (unit < 8.0f)   unit = 8.0f;
+    if (unit > 256.0f) unit = 256.0f;
+    const float p_min = kCursorPMin;
+    const float p_max = kCursorPMax;
 
     ID3D11RenderTargetView* rtv = staging_rtv_[staging_idx_].Get();
     ctx_->OMSetRenderTargets(1, &rtv, nullptr);
@@ -651,18 +644,14 @@ bool Renderer::DrawStereoCursor(float u, float v, float parallax_frac) {
     ctx_->IASetInputLayout(nullptr);
     ctx_->VSSetShader(cursor_vs_.Get(), nullptr, 0);
     ctx_->PSSetShader(cursor_ps_.Get(), nullptr, 0);
-    ID3D11ShaderResourceView* srvs[]  = { cursor_srv_.Get() };
-    ID3D11SamplerState*       samps[] = { cursor_samp_.Get() };
-    ctx_->PSSetShaderResources(0, 1, srvs);
-    ctx_->PSSetSamplers(0, 1, samps);
 
-    // The arrow's hotspot is its top-left tip, so the quad's top-left corner
-    // sits exactly at the mouse position.
+    // The arrow's hotspot (tip, p=0) sits exactly at the mouse position; the
+    // quad extends from p_min*unit above-left to p_max*unit below-right of it.
     auto draw_eye = [&](float hotspot_x_px, float hotspot_y_px) {
-        const float x0 = hotspot_x_px;
-        const float y0 = hotspot_y_px;
-        const float x1 = hotspot_x_px + cw_px;
-        const float y1 = hotspot_y_px + ch_px;
+        const float x0 = hotspot_x_px + p_min * unit;
+        const float y0 = hotspot_y_px + p_min * unit;
+        const float x1 = hotspot_x_px + p_max * unit;
+        const float y1 = hotspot_y_px + p_max * unit;
         float rect[4] = {
             x0 / W * 2.0f - 1.0f,   // left  clip
             1.0f - y0 / H * 2.0f,   // top   clip
@@ -678,8 +667,8 @@ bool Renderer::DrawStereoCursor(float u, float v, float parallax_frac) {
         ctx_->Draw(4, 0);
     };
 
-    // Split the eyes symmetrically around the convergence point so changing
-    // parallax pushes depth without sliding the cursor sideways.
+    // Symmetric per-eye disparity (= 3DVision4All's ±cursor_separation/2) so
+    // changing depth doesn't slide the cursor sideways.
     const float py = v * H;
     const float lx = (u - parallax_frac * 0.5f) * halfW;
     const float rx = halfW + (u + parallax_frac * 0.5f) * halfW;
@@ -687,8 +676,6 @@ bool Renderer::DrawStereoCursor(float u, float v, float parallax_frac) {
     draw_eye(rx, py);
 
     // Unbind so NV3DLib's import / ImGui's compose don't inherit our state.
-    ID3D11ShaderResourceView* null_srv[] = { nullptr };
-    ctx_->PSSetShaderResources(0, 1, null_srv);
     ID3D11RenderTargetView* null_rtv[] = { nullptr };
     ctx_->OMSetRenderTargets(1, null_rtv, nullptr);
     return true;

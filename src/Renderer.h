@@ -84,16 +84,17 @@ public:
     // falls through to the scaler shader. Pass an empty RECT (or a rect
     // covering the full src) to behave like CopyCaptureToStaging.
     bool             CopyCaptureRegionToStaging(ID3D11Texture2D* src, const RECT& src_box);
-    // Composite a stereo software cursor (a small reticle) into the CURRENT
-    // staging slot, on top of whatever capture content was just written. u/v
-    // are the mouse position normalized within the captured content [0,1]; the
-    // reticle is drawn into both SbS eye halves at that position. parallax_frac
-    // splits the two eyes horizontally (fraction of per-eye width) so the
-    // reticle can sit at, in front of, or behind the screen plane. Must be
-    // called AFTER a CopyCapture*/FillTestPattern for the same tick (those
-    // overwrite the whole slot) and BEFORE the frame is submitted. No-op if the
-    // cursor pipeline can't be built.
-    bool             DrawStereoCursor(float u, float v, float parallax_frac);
+    // Composite a stereo software mouse pointer (a folded 3D navigation arrow,
+    // the 3DVision4All/UEVR-3D shape) into the CURRENT staging slot, on top of
+    // whatever capture content was just written. u/v are the mouse position
+    // normalized within the captured content [0,1]; the arrow is drawn into
+    // both SbS eye halves at that position. parallax_frac splits the two eyes
+    // horizontally (fraction of per-eye width) so the arrow can sit at, in
+    // front of, or behind the screen plane. arrow_px is the arrow height in
+    // staging pixels. Must be called AFTER a CopyCapture*/FillTestPattern for
+    // the same tick (those overwrite the whole slot) and BEFORE the frame is
+    // submitted. No-op if the cursor pipeline can't be built.
+    bool             DrawStereoCursor(float u, float v, float parallax_frac, int arrow_px);
 
     // Fill staging with the DX11Sample-style stereo test pattern (red+quad in
     // the left eye half, green+quad in the right; a parallax-shifted white
@@ -157,19 +158,16 @@ private:
     DXGI_FORMAT                                     scale_cached_fmt_ = DXGI_FORMAT_UNKNOWN;
 
     // Stereo-cursor pipeline - compiled on first DrawStereoCursor call. A
-    // vertexless quad (SV_VertexID) per eye samples a small baked arrow bitmap
-    // (white fill + black outline, straight alpha) so the 3D cursor reads as a
-    // normal mouse pointer. The dynamic constant buffer holds the quad's clip-
-    // space rectangle per draw.
+    // vertexless quad (SV_VertexID) per eye; the pixel shader draws a folded 3D
+    // navigation arrow (the 3DVision4All/UEVR-3D shape) procedurally and outputs
+    // it premultiplied for a hardware alpha-over blend. The dynamic constant
+    // buffer holds the quad's clip-space rectangle per draw.
     bool InitCursor();
     Microsoft::WRL::ComPtr<ID3D11VertexShader>       cursor_vs_;
     Microsoft::WRL::ComPtr<ID3D11PixelShader>        cursor_ps_;
     Microsoft::WRL::ComPtr<ID3D11BlendState>         cursor_blend_;
     Microsoft::WRL::ComPtr<ID3D11RasterizerState>    cursor_rs_;
     Microsoft::WRL::ComPtr<ID3D11Buffer>             cursor_cb_;
-    Microsoft::WRL::ComPtr<ID3D11Texture2D>          cursor_tex_;
-    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> cursor_srv_;
-    Microsoft::WRL::ComPtr<ID3D11SamplerState>       cursor_samp_;
     bool                                             cursor_ready_ = false;
 };
 

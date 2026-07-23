@@ -157,6 +157,7 @@ void LoadSettings(Settings& s, const wchar_t* path) {
     s.lock_cursor        = ReadBool (L"lock_cursor",       s.lock_cursor,        path);
     s.draw_3d_cursor     = ReadBool (L"draw_3d_cursor",    s.draw_3d_cursor,     path);
     s.cursor_parallax    = ReadFloat(L"cursor_parallax",   s.cursor_parallax,    path);
+    s.cursor_size        = ReadInt  (L"cursor_size",       s.cursor_size,        path);
     s.panel_x            = ReadInt (L"panel_x",            s.panel_x,            path);
     s.panel_y            = ReadInt (L"panel_y",            s.panel_y,            path);
     s.panel_w            = ReadInt (L"panel_w",            s.panel_w,            path);
@@ -181,6 +182,7 @@ void SaveSettings(const Settings& s, const wchar_t* path) {
     WriteInt(L"lock_cursor",         s.lock_cursor       ? 1 : 0,        path);
     WriteInt(L"draw_3d_cursor",      s.draw_3d_cursor    ? 1 : 0,        path);
     WriteFloat(L"cursor_parallax",   s.cursor_parallax,                  path);
+    WriteInt(L"cursor_size",         s.cursor_size,                      path);
     WriteInt(L"panel_x",             s.panel_x,                          path);
     WriteInt(L"panel_y",             s.panel_y,                          path);
     WriteInt(L"panel_w",             s.panel_w,                          path);

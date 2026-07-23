@@ -79,15 +79,18 @@ struct Settings {
     // foreground window, so alt+tabbing updates it. Only active while the FSE
     // popup is visible; released on every teardown path.
     bool         lock_cursor = false;
-    // Draw a software reticle into the SbS output at the mouse's position
+    // Draw a software mouse pointer (a folded 3D navigation arrow, same shape
+    // 3DVision4All / UEVR-3D use) into the SbS output at the mouse's position
     // within the captured content. The captured frame never contains the OS
     // cursor (WGC cursor capture is off), so this is the only pointer the 3D
     // view can show.
     bool         draw_3d_cursor = false;
-    // Right/left-eye horizontal split for the 3D cursor as a fraction of the
-    // per-eye width. 0 = screen plane. Small +/- values push the reticle
-    // behind / in front of the screen. Kept tiny - a few % is a lot of depth.
+    // Per-eye horizontal disparity for the 3D cursor as a fraction of the
+    // per-eye width (= 3DVision4All's cursor_separation). 0 = screen plane.
+    // Small +/- values push the arrow behind / in front of the screen.
     float        cursor_parallax = 0.0f;
+    // Arrow height in staging pixels (= 3DVision4All's cursor_size).
+    int          cursor_size = 32;
 
     // ---- Hotkeys (persisted) ----
     HotkeyDef hk_eyeswap     { MOD_SHIFT, VK_F8 };
