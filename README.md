@@ -59,8 +59,8 @@ button quits the app (and tears down the FSE popup cleanly).
 ## Settings & log
 
 - `NV3D-Glass.ini` (next to the .exe) - picked source, output monitor,
-  eye-swap, LightBoost / Driver Fix toggles, cursor lock / 3D cursor
-  settings, hotkey bindings, panel geometry.
+  eye-swap, LightBoost / Driver Fix toggles, force-full-capture-Hz toggles,
+  cursor lock / 3D cursor settings, hotkey bindings, panel geometry.
 - `NV3D-Glass.log` (next to the .exe) - all `[NV3D]` messages from the
   presenter + suppressor + LightBoost subsystems, plus app-level
   start/stop/shutdown checkpoints. First file to attach when reporting
@@ -79,6 +79,22 @@ button quits the app (and tears down the FSE popup cleanly).
 - **Click-through FSE popup**: the 3D output window is `WS_EX_LAYERED |
   WS_EX_TRANSPARENT` - mouse clicks pass through to whatever is
   underneath, so you can interact with the captured game without alt-tab.
+- **Force full capture Hz** (control panel toggles, shown for Window /
+  Monitor / Katanga sources): some games drop to a few fps when the mouse is
+  idle and the 3D popup fully occludes them - WGC because DWM stops
+  compositing the hidden source, and/or because Windows throttles the
+  occluded game. Both toggles opt the game out of Windows power throttling
+  and then keep it awake at ~120 Hz. Leave both off unless a source runs at a
+  few fps hands-off, then enable whichever works for that game (or both).
+  Only active while the 3D output is showing.
+    - **Cursor jiggle** (`force_full_capture_hz`): nudges the cursor +1/-1 px
+      (no net movement) each tick to force DWM to keep compositing. This is
+      the one that fixes the WGC floor, but the global cursor events can make
+      a raw-input game's camera shimmer.
+    - **Game poke** (`force_capture_hz_postmsg`): posts a same-position
+      `WM_MOUSEMOVE` straight to the game window to keep its render loop
+      pumping. Gentler (no global cursor motion) and more portable, but only
+      helps games that idle on lack of input - not the WGC compositing floor.
 - **Lock cursor to captured window** (control panel toggle): while the 3D
   output is showing, clips the mouse to the focused window's client area so
   mouse-look games don't let the pointer wander onto the desktop or another
