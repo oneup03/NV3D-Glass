@@ -2,8 +2,7 @@
 
 Capture a side-by-side stereo source (game, video player, Katanga producer) and
 re-present it as true frame-sequential **NVIDIA 3D Vision** output via
-[NV3DLib](https://github.com/oneup03/NV3D-Lib). No DLL injection into the
-captured app; runs as a standalone .exe with an ImGui control panel.
+NV3DLib. No DLL injection into the captured app; runs as a standalone .exe with an ImGui control panel.
 
 ## Requirements
 
@@ -17,13 +16,12 @@ captured app; runs as a standalone .exe with an ImGui control panel.
 - "Set up stereoscopic 3D" enabled in the NVIDIA Control Panel
 - For source: any windowed app that already produces side-by-side stereo
   (one frame split into left half / right half), or a
-  [Geo-11](https://helixmod.blogspot.com/2022/06/announcing-new-geo-11-3d-driver.html)
-  producer (see the Geo-11 setup note below)
+  katanga (full-SbS) producer (see the Geo-11 example below)
 
 ## Install
 
 Download the latest pre-release from the
-[Releases](https://github.com/oneup03/NV3D-Glass/releases) page, unzip, and run `NV3D-Glass.exe`. The
+<a href="https://github.com/oneup03/NV3D-Glass/releases">Releases</a> page, unzip, and run `NV3D-Glass.exe`. The
 binary is self-contained - no installer.
 
 ## Quick start
@@ -107,8 +105,7 @@ button quits the app (and tears down the FSE popup cleanly).
   content. Because the captured frame never contains the OS cursor, this is
   the only pointer the 3D view can show. `Cursor depth` sets its parallax
   (0 = screen plane; +/- pushes it behind / in front), and `Cursor size`
-  sets its height in pixels. Uses the same navigation-arrow shape as
-  [3DVision4All](https://github.com/oneup03/3DVision4All).
+  sets its height in pixels.
 - **Monitor capture caveat**: if you pick the *same* monitor as both
   source and output, the app refuses to start (would feed back into
   itself). Use Window capture instead, or pick a different display.
@@ -149,17 +146,13 @@ LGPL-2.1-or-later. See SPDX headers on individual source files and the
 
 ## Acknowledgments
 
-- [NV3DLib](https://github.com/oneup03/NV3D-Lib) - the 3D Vision presenter
-- [VRto3D](https://github.com/oneup03/VRto3D) - reference for the FSE
-  D3D9Ex + click-through + focus-management patterns
-- [SR-Loom](https://github.com/effcol/SR-Loom) - reference structure for
+- <a href="https://github.com/oneup03/NV3D-Lib">NV3DLib</a> - the 3D Vision presenter
+- <a href="https://github.com/effcol/SR-Loom">SR-Loom</a> - reference structure for
   the standalone-app shell + WGC perf patterns
-- [Katanga](https://github.com/bo3b/Katanga) - defines the shared-memory
+- <a href="https://github.com/bo3b/Katanga">Katanga</a> - defines the shared-memory
   producer/consumer protocol our `Katanga` source mode implements
-- [Geo-11](https://helixmod.blogspot.com/2022/06/announcing-new-geo-11-3d-driver.html) —
+- <a href="https://helixmod.blogspot.com/2022/06/announcing-new-geo-11-3d-driver.html">Geo-11</a> —
   modern producer for the Katanga protocol; we consume what it publishes
-- [VRScreenCap](https://github.com/artumino/VRScreenCap) - prior art for the
+- <a href="https://github.com/artumino/VRScreenCap">VRScreenCap</a> - prior art for the
   Katanga shared-memory consumer pattern
-- [3DVision4All](https://github.com/oneup03/3DVision4All) - reference for the
-  folded stereo navigation-arrow cursor shape
-- [Dear ImGui](https://github.com/ocornut/imgui) - control panel UI
+- <a href="https://github.com/ocornut/imgui">Dear ImGui</a> - control panel UI
