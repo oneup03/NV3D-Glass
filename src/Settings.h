@@ -25,6 +25,35 @@ namespace nv3dg {
 
 enum class SourceKind : int { None = 0, Window = 1, Monitor = 2, Katanga = 3 };
 
+// How the main loop decides when to capture and submit a frame.
+//
+//   Legacy        - the original free-running fixed 8ms tick: capture and
+//                   submit every tick regardless of the display or the
+//                   source. Kept as an escape hatch, not recommended.
+//   PresentClocked- wait for NV3DLib's present worker to go idle, then
+//                   capture and submit exactly one frame. The 3D panel's
+//                   vblank is the clock (PresentEx blocks on it), so this
+//                   is one capture per displayed stereo pair: no redundant
+//                   GPU copies competing with the captured game, no frames
+//                   dropped inside NV3DLib's submit, and the capture lands
+//                   as late as possible before the present that shows it.
+enum class PacingMode : int { Legacy = 0, PresentClocked = 1 };
+
+// Presentation interval of NV3DLib's D3D9Ex swap chain. Mirrors
+// NV3D::PresentInterval; kept as its own type so Settings doesn't drag the
+// library header into everything that includes it.
+//
+//   VsyncOn  - tear-free, the safe default.
+//   VsyncOff - unthrottled presents. Tears on its own; the point of it is
+//              that NVIDIA's Fast Sync only engages for applications that
+//              are NOT already vsync-limited, so this plus a Fast Sync
+//              driver profile gives tear-free output without the hard-vsync
+//              rate halving. NvProfile's "Apply 3D sync profile" writes that
+//              profile for us.
+//   Half     - deliberately halve the stereo rate for a source that can't
+//              hold the full rate, trading frames for an even cadence.
+enum class OutputSync : int { VsyncOn = 0, VsyncOff = 1, Half = 2 };
+
 struct HotkeyDef {
     UINT mods = 0;     // MOD_CONTROL|MOD_ALT etc.
     UINT vk   = 0;     // virtual-key code
@@ -40,6 +69,40 @@ struct Settings {
     bool         enable_lightboost = true;
     bool         enable_suppressor = true;
 
+    // Swap-chain presentation interval. Device-creation parameter - changing
+    // it needs a Stop/Start.
+    OutputSync   output_sync       = OutputSync::VsyncOn;
+    // EXPERIMENTAL D3DSWAPEFFECT_FLIPEX swap chain (see NV3D::InitParams::
+    // use_flipex). Unknown interaction with the 3D Vision signature scanner,
+    // so default off; NV3DLib falls back to DISCARD if the driver refuses it.
+    bool         use_flipex        = false;
+    // IDirect3DDevice9Ex::SetMaximumFrameLatency. 1 is the shortest queue
+    // and the historical value; 2-3 trades a frame of latency for tolerance
+    // of a hitch that would otherwise cost a whole stereo pair.
+    int          max_frame_latency = 1;
+
+    // Selecting OutputSync::VsyncOff applies our Fast Sync driver profile
+    // automatically, because that sync mode does nothing useful without it -
+    // Fast Sync only engages for applications that are not already
+    // vsync-limited. Asking once and then acting is the whole point; set
+    // false to keep the profile strictly button-driven.
+    bool         auto_apply_nvprofile = true;
+    // Whether the user has agreed to the automatic apply once. Until they
+    // have, selecting Vsync off raises a confirmation instead of silently
+    // writing driver settings.
+    bool         nvprofile_auto_confirmed = false;
+
+    // Which process the game-side driver profile applies to, as a
+    // WindowEntry stable_id ("game.exe|Window Title").
+    //
+    // Only needed for sources that don't identify the game by themselves. In
+    // Window mode the capture target IS the game. In Katanga mode the
+    // protocol carries a texture handle and nothing else, so the producer is
+    // otherwise only ever INFERRED from window focus - good enough for
+    // handing focus back, not good enough to write driver settings against.
+    // Picking it explicitly removes the guess.
+    std::wstring profile_target_id;
+
     // ---- Capture source ----
     SourceKind   source_kind = SourceKind::None;
     // For Window: process_basename + L"|" + window_title (re-matched at startup since HWNDs aren't stable).
@@ -47,6 +110,11 @@ struct Settings {
     std::wstring source_id;
 
     bool         auto_reacquire = true;
+
+    // ---- Frame pacing ----
+    // See PacingMode. Default PresentClocked; Legacy restores the original
+    // free-running tick if a machine misbehaves under the paced loop.
+    PacingMode   pacing_mode = PacingMode::PresentClocked;
 
     // Both WGC (Window/Monitor) and Katanga capture collapse to a few fps when
     // the mouse is idle and our fullscreen popup occludes the game - WGC because

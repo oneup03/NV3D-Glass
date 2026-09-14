@@ -19,6 +19,8 @@
 
 #include "CaptureSource.h"
 
+#include <Windows.h>
+
 #include <memory>
 
 struct ID3D11Device;
@@ -70,6 +72,32 @@ public:
     // released first, there's nothing cross-process for the teardown to
     // fault on. The next TryAcquire will re-import from the mapping slot.
     void ReleaseSharedHold();
+
+    // ---- Optional frame-ready extension ----
+    //
+    // The bare Katanga contract has NO per-frame synchronisation: the slot
+    // holds a handle, the texture is overwritten in place, and a consumer
+    // cannot tell a fresh frame from the one it already read. Geo-11 works
+    // exactly this way, so everything above must keep functioning without
+    // any of this.
+    //
+    // Some producers additively signal an auto-reset event named
+    // "Local\KatangaFrameReady" once per published frame (UEVR-3D does, see
+    // its Flat3DKatanga::present). When it is there we can present exactly
+    // the frames the producer actually drew instead of re-presenting the
+    // same texture at tick rate.
+    //
+    // FrameReadyEvent() returns the handle to wait on, or null when the
+    // producer doesn't offer one - in which case the caller must fall back
+    // to polling and TryAcquire keeps its always-succeeds behaviour.
+    // Ownership stays here; never close it.
+    HANDLE FrameReadyEvent() const;
+
+    // Record that the frame-ready event fired. The wait that consumed the
+    // signal owns it (an auto-reset event's signal is consumed by exactly
+    // one waiter), so the waiter must hand it over here or the frame is
+    // lost. Cleared by the next successful TryAcquire.
+    void MarkFrameSignaled();
 
     // Dimensions of the shared texture at first open - used by App::Start to
     // size the local staging texture so CopyResource hits the fast path.

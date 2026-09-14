@@ -47,7 +47,7 @@
       <LanguageStandard>stdcpp17</LanguageStandard>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
       <PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;_UNICODE;UNICODE;_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>$(ProjectDir)src;$(ProjectDir)external\NV3D-Lib\NV3DLib\include;$(ProjectDir)external\imgui;$(ProjectDir)external\imgui\backends;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)src;$(ProjectDir)external\NV3D-Lib\NV3DLib\include;$(ProjectDir)external\NV3D-Lib\external\nvapi;$(ProjectDir)external\imgui;$(ProjectDir)external\imgui\backends;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
@@ -101,6 +101,7 @@
     <ClCompile Include="src\HotkeyManager.cpp" />
     <ClCompile Include="src\Logging.cpp" />
     <ClCompile Include="src\NV3DPresenter.cpp" />
+    <ClCompile Include="src\NvProfile.cpp" />
     <ClCompile Include="src\Renderer.cpp" />
     <ClCompile Include="src\Settings.cpp" />
     <ClCompile Include="src\SourceEnumerator.cpp" />
@@ -116,6 +117,7 @@
     <ClInclude Include="src\HotkeyManager.h" />
     <ClInclude Include="src\Logging.h" />
     <ClInclude Include="src\NV3DPresenter.h" />
+    <ClInclude Include="src\NvProfile.h" />
     <ClInclude Include="src\Renderer.h" />
     <ClInclude Include="src\Settings.h" />
     <ClInclude Include="src\SourceEnumerator.h" />

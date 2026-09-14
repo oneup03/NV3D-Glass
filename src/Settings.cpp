@@ -22,6 +22,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cwchar>
+#include <string>
 
 #pragma comment(lib, "Shlwapi.lib")
 
@@ -143,7 +144,41 @@ HotkeyDef HotkeyFromStr(const std::wstring& s, const HotkeyDef& def) {
 std::wstring DefaultIniPath() { return ExeDir() + L"\\NV3D-Glass.ini"; }
 std::wstring DefaultLogPath() { return ExeDir() + L"\\NV3D-Glass.log"; }
 
+namespace {
+
+// GetPrivateProfileString parses INI files as ANSI (or UTF-16 when they carry
+// a UTF-16 BOM). A UTF-8 BOM is neither: the three bytes land in front of the
+// first section header, the section stops matching, and EVERY lookup silently
+// falls back to its default - i.e. the user's settings appear to reset
+// themselves with no error anywhere.
+//
+// That is easy to hit by accident: several editors (and PowerShell 5.1's
+// Set-Content -Encoding utf8) write UTF-8 WITH a BOM. Strip it in place on
+// load so hand-editing the file can't quietly wipe someone's configuration.
+void StripUtf8BomIfPresent(const wchar_t* path) {
+    FILE* f = nullptr;
+    if (_wfopen_s(&f, path, L"rb") != 0 || !f) return;
+    unsigned char bom[3]{};
+    const size_t got = fread(bom, 1, sizeof(bom), f);
+    if (got != sizeof(bom) || bom[0] != 0xEF || bom[1] != 0xBB || bom[2] != 0xBF) {
+        fclose(f);
+        return;
+    }
+    std::string rest;
+    char buf[4096];
+    size_t n;
+    while ((n = fread(buf, 1, sizeof(buf), f)) > 0) rest.append(buf, n);
+    fclose(f);
+
+    if (_wfopen_s(&f, path, L"wb") != 0 || !f) return;
+    if (!rest.empty()) fwrite(rest.data(), 1, rest.size(), f);
+    fclose(f);
+}
+
+}  // anonymous
+
 void LoadSettings(Settings& s, const wchar_t* path) {
+    StripUtf8BomIfPresent(path);
     s.source_kind        = SourceKindFromStr(ReadStr(L"last_source_kind", L"none", path));
     s.source_id          = ReadStr(L"last_source_id", L"", path);
     s.output_monitor_id  = ReadStr(L"output_monitor", L"", path);
@@ -151,7 +186,22 @@ void LoadSettings(Settings& s, const wchar_t* path) {
     s.on_top             = ReadBool(L"on_top",             s.on_top,             path);
     s.enable_lightboost  = ReadBool(L"enable_lightboost",  s.enable_lightboost,  path);
     s.enable_suppressor  = ReadBool(L"enable_suppressor",  s.enable_suppressor,  path);
+    {
+        const int sync = ReadInt(L"output_sync", (int)s.output_sync, path);
+        s.output_sync = (sync == (int)OutputSync::VsyncOff) ? OutputSync::VsyncOff
+                      : (sync == (int)OutputSync::Half)     ? OutputSync::Half
+                                                            : OutputSync::VsyncOn;
+    }
+    s.use_flipex         = ReadBool(L"use_flipex",         s.use_flipex,         path);
+    s.max_frame_latency  = ReadInt (L"max_frame_latency",  s.max_frame_latency,  path);
+    if (s.max_frame_latency < 1) s.max_frame_latency = 1;
+    if (s.max_frame_latency > 3) s.max_frame_latency = 3;
+    s.auto_apply_nvprofile     = ReadBool(L"auto_apply_nvprofile",     s.auto_apply_nvprofile,     path);
+    s.nvprofile_auto_confirmed = ReadBool(L"nvprofile_auto_confirmed", s.nvprofile_auto_confirmed, path);
+    s.profile_target_id        = ReadStr(L"profile_target", L"", path);
     s.auto_reacquire     = ReadBool(L"auto_reacquire",     s.auto_reacquire,     path);
+    s.pacing_mode        = (ReadInt(L"pacing_mode", (int)s.pacing_mode, path) == (int)PacingMode::Legacy)
+                               ? PacingMode::Legacy : PacingMode::PresentClocked;
     s.force_full_capture_hz    = ReadBool(L"force_full_capture_hz",    s.force_full_capture_hz,    path);
     s.force_capture_hz_postmsg = ReadBool(L"force_capture_hz_postmsg", s.force_capture_hz_postmsg, path);
     s.lock_cursor        = ReadBool (L"lock_cursor",       s.lock_cursor,        path);
@@ -176,7 +226,14 @@ void SaveSettings(const Settings& s, const wchar_t* path) {
     WriteInt(L"on_top",              s.on_top            ? 1 : 0,        path);
     WriteInt(L"enable_lightboost",   s.enable_lightboost ? 1 : 0,        path);
     WriteInt(L"enable_suppressor",   s.enable_suppressor ? 1 : 0,        path);
+    WriteInt(L"output_sync",         (int)s.output_sync,                 path);
+    WriteInt(L"use_flipex",          s.use_flipex        ? 1 : 0,        path);
+    WriteInt(L"max_frame_latency",   s.max_frame_latency,                path);
+    WriteInt(L"auto_apply_nvprofile",     s.auto_apply_nvprofile     ? 1 : 0, path);
+    WriteInt(L"nvprofile_auto_confirmed", s.nvprofile_auto_confirmed ? 1 : 0, path);
+    WriteStr(L"profile_target",      s.profile_target_id.c_str(),        path);
     WriteInt(L"auto_reacquire",      s.auto_reacquire    ? 1 : 0,        path);
+    WriteInt(L"pacing_mode",         (int)s.pacing_mode,                 path);
     WriteInt(L"force_full_capture_hz",    s.force_full_capture_hz    ? 1 : 0, path);
     WriteInt(L"force_capture_hz_postmsg", s.force_capture_hz_postmsg ? 1 : 0, path);
     WriteInt(L"lock_cursor",         s.lock_cursor       ? 1 : 0,        path);

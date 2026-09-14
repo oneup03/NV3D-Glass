@@ -82,14 +82,23 @@ bool NV3DPresenter::Init(ID3D11Device* dev, const Settings& s, DWORD tracked_gam
     p.host_hwnd               = nullptr;   // library-owned FSE click-through window
     p.activation_retry_budget = 60;
     p.tracked_game_pid        = tracked_game_pid;
+    p.present_interval        = (s.output_sync == OutputSync::VsyncOff)
+                                   ? NV3D::PresentInterval::VsyncOff
+                              : (s.output_sync == OutputSync::Half)
+                                   ? NV3D::PresentInterval::Half
+                                   : NV3D::PresentInterval::VsyncOn;
+    p.use_flipex              = s.use_flipex;
+    p.max_frame_latency       = static_cast<uint32_t>(s.max_frame_latency);
 
     Log(NV3D::LogLevel::Info,
         L"NV3DPresenter::Init target_monitor=%p eye_swap=%d on_top=%d "
-        L"lightboost=%d suppressor=%d tracked_game_pid=%lu",
+        L"lightboost=%d suppressor=%d tracked_game_pid=%lu "
+        L"sync=%d flipex=%d max_frame_latency=%d",
         (void*)s.target_monitor,
         (int)s.eye_swap, (int)s.on_top,
         (int)s.enable_lightboost, (int)s.enable_suppressor,
-        static_cast<unsigned long>(tracked_game_pid));
+        static_cast<unsigned long>(tracked_game_pid),
+        (int)s.output_sync, (int)s.use_flipex, s.max_frame_latency);
 
     HRESULT hr = NV3D::CreateInterfaceDX11(dev, &p, &iface_);
     if (FAILED(hr) || !iface_) {
@@ -126,6 +135,25 @@ HRESULT NV3DPresenter::SubmitFrame(ID3D11Texture2D* sbs) {
         last_tex_ = sbs;
     }
     return iface_->Present();
+}
+
+HANDLE NV3DPresenter::PresentCompletedEvent() const {
+    return iface_ ? iface_->GetPresentCompletedEvent() : nullptr;
+}
+
+bool NV3DPresenter::IsPresentBusy() const {
+    // No event (no session, or the library couldn't create one) reads as
+    // "not busy" so the caller falls back to its timer path rather than
+    // stalling forever waiting for an idle signal that will never come.
+    HANDLE h = PresentCompletedEvent();
+    if (!h) return false;
+    return WaitForSingleObject(h, 0) != WAIT_OBJECT_0;
+}
+
+void NV3DPresenter::GetPresentStats(NV3D::PresentStats* out) const {
+    if (!out) return;
+    if (!iface_) { *out = NV3D::PresentStats{}; return; }
+    iface_->GetPresentStats(out);
 }
 
 void NV3DPresenter::SetVisible(bool visible) {

@@ -29,3 +29,5 @@ Win32/
 ## Runtime
 NV3D-Glass.ini
 NV3D-Glass.log
+NV3D-Glass-nvprofile.log
+imgui.ini

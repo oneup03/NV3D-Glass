@@ -75,6 +75,17 @@ private:
 public:
     void  Quit();
 
+    // Relaunch this executable and quit. Needed because the NVIDIA driver
+    // reads an application's profile while the process initialises its
+    // graphics DLL - and we create a D3D11 device in Init(), so by the time
+    // the user can change anything our profile is already bound. Stopping and
+    // restarting the 3D session is NOT enough; only a new process is.
+    //
+    // The replacement is passed our pid and waits for us to exit before doing
+    // anything: two live instances would fight over the tray icon, the global
+    // hotkey registrations and the Katanga mapping.
+    bool  RestartSelf();
+
     void  RefreshSources();        // re-enumerate windows + monitors (for picker)
 
     // ---- State accessors for Gui ----
@@ -95,12 +106,46 @@ public:
 
     bool                  is_capture_running() const { return cap_ != nullptr; }
 
+    // Where settings live - the NVIDIA profile writer stores its undo record
+    // in a private section of the same file.
+    const std::wstring&   ini_path() const { return ini_path_; }
+
+    // Full path to the captured game's executable, or empty when no game is
+    // tracked. Opens its own short-lived query handle rather than reusing
+    // tracked_process_handle_, which is deliberately SYNCHRONIZE-only.
+    std::wstring          TrackedGameExePath() const;
+
+    // The panel's stereo frame rate: a 3D Vision display shows one stereo
+    // pair per two refreshes, so this is half the output monitor's refresh
+    // (120Hz -> 60). This is the rate a source should be capped to. Falls
+    // back to 60 when the mode can't be read.
+    int                   StereoRateHz() const;
+
     // WndProc forwards everything here.
     LRESULT WndProc(HWND, UINT, WPARAM, LPARAM);
 
 private:
     bool   CreateControlPanelWindow();
     void   Tick();
+
+    // Block until there is something worth ticking for, or the fallback
+    // timeout lapses. In PacingMode::PresentClocked this waits on NV3DLib's
+    // present-worker idle event and (when the producer offers one) the
+    // Katanga frame-ready event, so we wake the moment the display is ready
+    // for another frame or the game published one - not on a timer that
+    // beats against both. The fallback timeout is deliberately kept at the
+    // original tick period: every per-tick cadence in Tick (the
+    // device-removed watchdog, foreground sampling, DriveIdleCaptureHz, the
+    // diagnostic ping) is calibrated in ticks, and the idle-capture wake in
+    // particular is documented as needing ~120Hz. Pacing changes WHAT a tick
+    // does, never how often ticks happen.
+    void   WaitForNextTick();
+
+    // Accumulate and (once per second) emit the pacing diagnostic, gated on
+    // NV3D_GLASS_PACING=1. This is how the frame-pacing work is measured:
+    // tick period, how many ticks actually captured, and NV3DLib's own
+    // accepted/dropped/present-duration counters.
+    void   AccumulatePacingStats(bool captured, bool presented);
     void   PumpHotkeys();
     void   ReregisterHotkeys();
     void   ApplyPanelGeometryFromSettings();
@@ -267,6 +312,30 @@ private:
     bool                               dwm_poke_active_ = false;
     DWORD                              game_process_tweaked_pid_ = 0;
     HWND                               cached_game_hwnd_ = nullptr;
+
+    // ---- Pacing telemetry (NV3D_GLASS_PACING=1) ----
+    // last_tick_ts_ is the previous Tick's entry timestamp, so the deltas
+    // measure the real loop period including whatever the OS timer
+    // granularity actually gives us. Everything else accumulates over a
+    // one-second window and resets on each emit.
+    // Periodic high-resolution waitable timer driving the fallback tick.
+    // Deliberately NOT a plain wait timeout: Windows only honours a
+    // process's timeBeginPeriod request while it has a visible foreground
+    // window, and NV3D-Glass hides its control panel for the whole session -
+    // so a timeout-driven loop silently drops to the ~15.6ms default quantum
+    // exactly when pacing matters. CREATE_WAITABLE_TIMER_HIGH_RESOLUTION is
+    // independent of that. Null on pre-1803 Windows, where we fall back to a
+    // plain wait timeout.
+    HANDLE                             tick_timer_ = nullptr;
+    std::chrono::steady_clock::time_point legacy_next_tick_{};
+    std::chrono::steady_clock::time_point pacing_window_t0_{};
+    std::chrono::steady_clock::time_point last_tick_ts_{};
+    uint32_t                           pacing_ticks_      = 0;
+    uint32_t                           pacing_captures_   = 0;
+    uint32_t                           pacing_presents_   = 0;
+    double                             pacing_tick_ms_sum_ = 0.0;
+    double                             pacing_tick_ms_min_ = 0.0;
+    double                             pacing_tick_ms_max_ = 0.0;
 
     std::wstring                       status_extra_;
 };

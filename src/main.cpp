@@ -26,8 +26,12 @@
 
 #include "App.h"
 #include "Logging.h"
+#include "NvProfile.h"
+#include "Settings.h"
 
 #include <Windows.h>
+
+#include <string>
 
 // C++/WinRT requires apartment init exactly once per thread before any winrt
 // API call. We do it here so WGC capture's first call (in App::Start) is
@@ -35,6 +39,48 @@
 #include <winrt/base.h>
 
 int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int) {
+    // Elevated helper mode. The UI can't write NVIDIA driver settings without
+    // admin rights, so it re-launches this same exe elevated with
+    // --apply-nvprofile; that instance performs exactly one DRS transaction
+    // and exits without ever creating a window, a device or a capture.
+    // Checked before anything else so the helper stays as small and as
+    // side-effect-free as possible.
+    if (wcsstr(GetCommandLineW(), L"--apply-nvprofile")) {
+        // Its own log file, not NV3D-Glass.log: the parent process is very
+        // likely running and holding that one open exclusively, and
+        // InitFileLog truncates. A separate file means the helper's
+        // diagnostics survive and the parent's log is untouched.
+        const std::wstring ini = nv3dg::DefaultIniPath();
+        std::wstring helper_log = nv3dg::DefaultLogPath();
+        const size_t dot = helper_log.find_last_of(L'.');
+        helper_log = (dot == std::wstring::npos ? helper_log : helper_log.substr(0, dot)) +
+                     L"-nvprofile.log";
+        nv3dg::InitFileLog(helper_log.c_str());
+
+        int profile_rc = 0;
+        const bool handled = nv3dg::NvProfile::RunCommandLine(
+            GetCommandLineW(), ini.c_str(), &profile_rc);
+        nv3dg::ShutdownFileLog();
+        if (handled) return profile_rc;
+        // Fall through only if the flag was present but unparseable - better
+        // to start normally than to exit silently.
+    }
+
+    // A restarting instance hands us the outgoing process id. Wait for it to
+    // actually be gone before touching anything global - the tray icon, the
+    // global hotkey registrations and the Katanga mapping are all things two
+    // live instances would fight over. Bounded so a wedged predecessor can't
+    // stop the replacement coming up at all.
+    if (const wchar_t* p = wcsstr(GetCommandLineW(), L"--wait-for-pid")) {
+        const DWORD pid = static_cast<DWORD>(_wtoi(p + wcslen(L"--wait-for-pid")));
+        if (pid != 0) {
+            if (HANDLE prev = OpenProcess(SYNCHRONIZE, FALSE, pid)) {
+                WaitForSingleObject(prev, 10000);
+                CloseHandle(prev);
+            }
+        }
+    }
+
     winrt::init_apartment(winrt::apartment_type::single_threaded);
 
     nv3dg::App app;

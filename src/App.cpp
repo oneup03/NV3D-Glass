@@ -30,8 +30,13 @@
 
 #include <Windows.h>
 #include <d3d11.h>
+#include <timeapi.h>   // timeBeginPeriod / timeEndPeriod
 #include <chrono>
 #include <thread>
+
+// timeBeginPeriod lives in winmm. Linked here rather than in the project
+// file so the dependency sits next to its only use.
+#pragma comment(lib, "winmm.lib")
 
 // PROCESS_POWER_THROTTLING_STATE (used by DriveIdleCaptureHz to opt the game
 // out of Win11 EcoQoS execution throttling) is only declared by the SDK when
@@ -63,6 +68,15 @@ namespace nv3dg {
 namespace {
 
 constexpr wchar_t kWndClass[] = L"NV3DGlass_ControlPanel";
+
+// Main-loop tick period. In present-clocked pacing this is only the FALLBACK
+// rate - a live session is driven by the present-completed and producer
+// frame-ready events - but it is what every per-tick cadence in Tick() is
+// calibrated against (the device-removed watchdog, foreground sampling, the
+// diagnostic ping, and DriveIdleCaptureHz, which is documented as wanting
+// ~120Hz). Keep it at the original 8ms so pacing changes what a tick does,
+// never how often ticks happen.
+constexpr DWORD kTickMs = 8;
 
 constexpr int kHKEyeSwap     = 1;
 constexpr int kHKTogglePanel = 2;
@@ -178,11 +192,55 @@ void App::Shutdown() {
 }
 
 int App::Run() {
-    Log(NV3D::LogLevel::Info, L"App::Run  entering message loop");
+    Log(NV3D::LogLevel::Info, L"App::Run  entering message loop  pacing=%s",
+        settings_.pacing_mode == PacingMode::Legacy ? L"legacy" : L"present-clocked");
     running_ = true;
-    auto next = std::chrono::steady_clock::now();
-    fps_t0_   = next;
+    fps_t0_   = std::chrono::steady_clock::now();
     fps_frames_ = 0;
+    pacing_window_t0_ = fps_t0_;
+    legacy_next_tick_ = fps_t0_;
+
+    // Raise the OS timer resolution for the lifetime of the loop.
+    //
+    // Windows 10 2004+ made timer resolution per-process: a process that
+    // never calls timeBeginPeriod gets the ~15.6ms default, so the 8ms
+    // wait below actually lapses at ~15.6ms and, worse, at an interval
+    // that has no relationship to the display. That turns the tick into a
+    // jittery ~64Hz sampling clock beating against the panel's 60Hz stereo
+    // cadence - visible as stutter no matter how fast the source runs.
+    const bool hires_timer = (timeBeginPeriod(1) == TIMERR_NOERROR);
+    if (!hires_timer) {
+        Log(NV3D::LogLevel::Warning,
+            L"App::Run  timeBeginPeriod(1) failed - loop timing will be coarse "
+            L"(~15.6ms quantum), expect pacing jitter");
+    }
+
+    // ...and don't rely on it. Measured: the process keeps the 1ms resolution
+    // only while its window is foreground; a few seconds after focus moves
+    // away the loop period degrades from ~8.4ms to ~15.5ms. Since the control
+    // panel is hidden for the whole of a capture session, that degradation is
+    // the normal case, not the exception. A high-resolution waitable timer is
+    // unaffected, so the fallback tick rides on that instead and the wait
+    // below can block indefinitely on events.
+    tick_timer_ = CreateWaitableTimerExW(nullptr, nullptr,
+                                         CREATE_WAITABLE_TIMER_HIGH_RESOLUTION,
+                                         TIMER_ALL_ACCESS);
+    if (tick_timer_) {
+        LARGE_INTEGER due{};
+        due.QuadPart = -(LONGLONG)kTickMs * 10000LL;   // relative, 100ns units
+        if (!SetWaitableTimerEx(tick_timer_, &due, (LONG)kTickMs,
+                                nullptr, nullptr, nullptr, 0)) {
+            Log(NV3D::LogLevel::Warning,
+                L"App::Run  SetWaitableTimerEx failed err=%lu - falling back to "
+                L"wait timeouts", GetLastError());
+            CloseHandle(tick_timer_);
+            tick_timer_ = nullptr;
+        }
+    } else {
+        Log(NV3D::LogLevel::Info,
+            L"App::Run  high-resolution waitable timer unavailable (err=%lu) - "
+            L"using wait timeouts", GetLastError());
+    }
 
     while (running_) {
         MSG msg;
@@ -195,12 +253,132 @@ int App::Run() {
 
         Tick();
 
-        next += std::chrono::milliseconds(8);
-        auto now = std::chrono::steady_clock::now();
-        if (next > now) std::this_thread::sleep_until(next);
-        else            next = now;
+        WaitForNextTick();
     }
+
+    if (tick_timer_) {
+        CancelWaitableTimer(tick_timer_);
+        CloseHandle(tick_timer_);
+        tick_timer_ = nullptr;
+    }
+    if (hires_timer) timeEndPeriod(1);
     return 0;
+}
+
+void App::AccumulatePacingStats(bool captured, bool presented) {
+    // Opt-in: this is a measurement tool for frame-pacing work, not
+    // something a normal session should be writing to the log every second.
+    static const bool pacing_on = []() {
+        wchar_t v[8]{};
+        DWORD n = GetEnvironmentVariableW(L"NV3D_GLASS_PACING", v, _countof(v));
+        return n > 0 && n < _countof(v) && v[0] != L'0';
+    }();
+    if (!pacing_on) return;
+
+    const auto now = std::chrono::steady_clock::now();
+    if (last_tick_ts_.time_since_epoch().count() != 0) {
+        const double ms = std::chrono::duration<double, std::milli>(now - last_tick_ts_).count();
+        if (pacing_ticks_ == 0) {
+            pacing_tick_ms_min_ = ms;
+            pacing_tick_ms_max_ = ms;
+        } else {
+            if (ms < pacing_tick_ms_min_) pacing_tick_ms_min_ = ms;
+            if (ms > pacing_tick_ms_max_) pacing_tick_ms_max_ = ms;
+        }
+        pacing_tick_ms_sum_ += ms;
+        ++pacing_ticks_;
+    }
+    last_tick_ts_ = now;
+    if (captured)  ++pacing_captures_;
+    if (presented) ++pacing_presents_;
+
+    const double window_s =
+        std::chrono::duration<double>(now - pacing_window_t0_).count();
+    if (window_s < 1.0) return;
+    pacing_window_t0_ = now;
+
+    // NV3DLib's side of the story: how many submits it took, how many it had
+    // to drop because the worker was still busy, and how long a completed
+    // present actually takes. drop>0 in present-clocked mode means the gate
+    // is leaking; present_ms near 16.7 is a healthy 120Hz stereo cadence.
+    NV3D::PresentStats ps{};
+    presenter_.GetPresentStats(&ps);
+
+    Log(NV3D::LogLevel::Info,
+        L"App::Pacing  mode=%s tick(min/avg/max)=%.1f/%.1f/%.1f ms  "
+        L"ticks=%u captures=%u submits=%u  lib(accepted=%u dropped=%u done=%u "
+        L"present_avg=%.1f present_max=%.1f ms)  fps=%.1f",
+        settings_.pacing_mode == PacingMode::Legacy ? L"legacy" : L"present-clocked",
+        pacing_tick_ms_min_,
+        pacing_ticks_ ? pacing_tick_ms_sum_ / pacing_ticks_ : 0.0,
+        pacing_tick_ms_max_,
+        pacing_ticks_, pacing_captures_, pacing_presents_,
+        ps.submits_accepted, ps.submits_dropped, ps.presents_done,
+        ps.present_ms_avg, ps.present_ms_max, fps_);
+
+    pacing_ticks_       = 0;
+    pacing_captures_    = 0;
+    pacing_presents_    = 0;
+    pacing_tick_ms_sum_ = 0.0;
+    pacing_tick_ms_min_ = 0.0;
+    pacing_tick_ms_max_ = 0.0;
+}
+
+void App::WaitForNextTick() {
+    if (settings_.pacing_mode == PacingMode::Legacy) {
+        // Original free-running tick, drift-compensated, unchanged.
+        legacy_next_tick_ += std::chrono::milliseconds(kTickMs);
+        const auto now = std::chrono::steady_clock::now();
+        if (legacy_next_tick_ > now) std::this_thread::sleep_until(legacy_next_tick_);
+        else                         legacy_next_tick_ = now;
+        return;
+    }
+
+    // Build the wait set. Order matters: the Katanga frame-ready event is
+    // AUTO-reset, so whichever waiter observes it consumes the signal, and
+    // MsgWaitForMultipleObjectsEx only consumes the LOWEST signalled index.
+    // Putting it first guarantees we never lose a producer frame to the
+    // manual-reset present event sitting permanently signalled beside it.
+    HANDLE handles[3];
+    DWORD  n = 0;
+    CaptureKatanga* kat = dynamic_cast<CaptureKatanga*>(cap_.get());
+    HANDLE frame_ready = kat ? kat->FrameReadyEvent() : nullptr;
+    if (frame_ready) handles[n++] = frame_ready;
+
+    // Only wait on the present event while a present is actually in flight.
+    // It is manual-reset and stays SET for the whole idle period, so adding
+    // it unconditionally would make every wait return instantly and spin the
+    // loop at 100% CPU.
+    const bool present_in_flight = presenter_.IsPresentBusy();
+    if (present_in_flight) {
+        if (HANDLE done = presenter_.PresentCompletedEvent()) handles[n++] = done;
+    }
+
+    // The periodic timer is the fallback tick. When we have it the wait can
+    // block indefinitely on events, which is what keeps the loop period
+    // honest after Windows demotes our timer resolution (see Run()). Added
+    // LAST so the frame-ready event keeps the lowest index.
+    const DWORD timeout = tick_timer_ ? INFINITE : kTickMs;
+    if (tick_timer_) handles[n++] = tick_timer_;
+
+    if (n == 0) {
+        // Nothing to wait on beyond input - the plain timed path. Still go
+        // through MsgWaitForMultipleObjectsEx rather than Sleep so window
+        // messages (and therefore the control panel) stay responsive.
+        MsgWaitForMultipleObjectsEx(0, nullptr, timeout, QS_ALLINPUT,
+                                    MWMO_INPUTAVAILABLE);
+        return;
+    }
+
+    const DWORD r = MsgWaitForMultipleObjectsEx(n, handles, timeout, QS_ALLINPUT,
+                                                MWMO_INPUTAVAILABLE);
+    // Hand a consumed frame-ready signal to the capture source. An auto-reset
+    // event's signal is delivered to exactly one waiter; if we swallow it
+    // here without recording it, that frame is lost and the next TryAcquire
+    // refuses to hand out a texture.
+    if (frame_ready && r == WAIT_OBJECT_0 && kat) {
+        kat->MarkFrameSignaled();
+    }
 }
 
 bool App::CreateControlPanelWindow() {
@@ -867,6 +1045,43 @@ void App::UpdateCursorLock() {
     }
 }
 
+bool App::RestartSelf() {
+    wchar_t exe[MAX_PATH]{};
+    const DWORD n = GetModuleFileNameW(nullptr, exe, MAX_PATH);
+    if (n == 0 || n >= MAX_PATH) {
+        Log(NV3D::LogLevel::Warning, L"App::RestartSelf  cannot resolve our own path");
+        return false;
+    }
+
+    // Tear the session down ourselves rather than leaving it to Shutdown
+    // while a replacement is already starting - the FSE stereo device must be
+    // released before anything else tries to take the display.
+    if (state_ == AppState::Running) Stop();
+
+    // Persist before spawning. The child waits for us to exit (and Shutdown
+    // saves again), but if that wait ever times out it must not come up with
+    // the very setting that prompted the restart missing.
+    PersistPanelGeometry();
+    SaveSettings(settings_, ini_path_.c_str());
+
+    std::wstring cmd = L"\"" + std::wstring(exe) + L"\" --wait-for-pid " +
+                       std::to_wstring(GetCurrentProcessId());
+    STARTUPINFOW si{};
+    si.cb = sizeof(si);
+    PROCESS_INFORMATION pi{};
+    if (!CreateProcessW(nullptr, cmd.data(), nullptr, nullptr, FALSE,
+                        0, nullptr, nullptr, &si, &pi)) {
+        Log(NV3D::LogLevel::Warning,
+            L"App::RestartSelf  CreateProcess failed err=%lu", GetLastError());
+        return false;
+    }
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+    Log(NV3D::LogLevel::Info, L"App::RestartSelf  replacement launched - quitting");
+    Quit();
+    return true;
+}
+
 void App::Quit() {
     Log(NV3D::LogLevel::Info, L"App::Quit  state=%d", (int)state_);
     running_ = false;
@@ -988,7 +1203,40 @@ void App::ReregisterHotkeys() {
                           [this] { ToggleFseVisible(); });
 }
 
+std::wstring App::TrackedGameExePath() const {
+    if (tracked_pid_ == 0) return std::wstring();
+    HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, tracked_pid_);
+    if (!h) return std::wstring();
+    wchar_t buf[MAX_PATH]{};
+    DWORD n = MAX_PATH;
+    const bool ok = QueryFullProcessImageNameW(h, 0, buf, &n) != 0;
+    CloseHandle(h);
+    return ok ? std::wstring(buf, n) : std::wstring();
+}
+
+int App::StereoRateHz() const {
+    DEVMODEW dm{};
+    dm.dmSize = sizeof(dm);
+    if (!EnumDisplaySettingsW(settings_.output_monitor_id.empty()
+                                  ? nullptr
+                                  : settings_.output_monitor_id.c_str(),
+                              ENUM_CURRENT_SETTINGS, &dm)) {
+        return 60;
+    }
+    const int refresh = (int)dm.dmDisplayFrequency;
+    // Frame-sequential stereo spends two refreshes per pair. Guard against
+    // the 0/1 values Windows reports for "hardware default" modes.
+    if (refresh < 30) return 60;
+    return refresh / 2;
+}
+
 void App::Tick() {
+    // Pacing diagnostics for this tick - did we actually pull a new source
+    // frame, and did we hand one to the presenter. Both stay false on the
+    // many ticks that are pure housekeeping.
+    bool tick_captured  = false;
+    bool tick_presented = false;
+
     // Device-removed watchdog - runs in EVERY state, ~4Hz. The Running-path
     // checks below catch a TDR mid-session, but a reset while Idle (e.g.
     // another 3D Vision app engaging stereo and tripping the driver after
@@ -1052,6 +1300,21 @@ void App::Tick() {
     if (state_ == AppState::Running) {
         bool staging_dirty = false;
 
+        // Present-clocked pacing gate. NV3DLib's present worker is busy for
+        // essentially the whole interval between stereo pairs (PresentEx
+        // blocks on the panel's vblank), so anything we capture while it is
+        // busy is work that gets thrown away: the staging copy is overwritten
+        // before it is read, and the submit either stalls this thread for
+        // NV3DLib's submit timeout or is dropped outright. Skip the capture
+        // AND the submit while a present is in flight, and do exactly one of
+        // each in the window after it completes.
+        //
+        // Everything else in this block - device-loss checks, producer-death
+        // detection, disconnect handling, gap telemetry - is deliberately
+        // OUTSIDE the gate and still runs on every tick.
+        const bool slot_open = (settings_.pacing_mode == PacingMode::Legacy) ||
+                               !presenter_.IsPresentBusy();
+
         // While the user has the FSE popup hidden (Ctrl+F8), pause Katanga
         // acquisition entirely. ReleaseSharedHold on the hide transition is
         // otherwise defeated ~8ms later: the next Tick's TryAcquire
@@ -1099,7 +1362,7 @@ void App::Tick() {
             ID3D11Texture2D* src = nullptr;
             UINT w = 0, h = 0;
             DXGI_FORMAT fmt = DXGI_FORMAT_UNKNOWN;
-            if (cap_->TryAcquire(&src, &w, &h, &fmt) && src) {
+            if (slot_open && cap_->TryAcquire(&src, &w, &h, &fmt) && src) {
                 // First Katanga frame: reveal the FSE popup AND hand focus
                 // to the producer's game window. We never resize staging or
                 // restart on dim differences - the renderer's scaler handles
@@ -1276,6 +1539,7 @@ void App::Tick() {
                 last_src_h_   = h;
                 last_src_fmt_ = (UINT)fmt;
                 staging_dirty = true;
+                tick_captured = true;
                 src->Release();
             }
             if (cap_->IsLost()) {
@@ -1368,12 +1632,15 @@ void App::Tick() {
                     producer_gap_logged_ = true;
                 }
             }
-        } else {
+        } else if (slot_open) {
             // No capture session - animate the test pattern so the user can
             // see the present loop is alive and verify per-eye stereo
-            // independently of any capture issues.
+            // independently of any capture issues. Paced like a real source:
+            // one new frame per completed present, so the test pattern
+            // exercises the same path a game does.
             renderer_.FillTestPattern(test_pattern_frame_++);
             staging_dirty = true;
+            tick_captured = true;
         }
 
         // 3D cursor: composite the arrow pointer into the freshly-written
@@ -1420,7 +1687,11 @@ void App::Tick() {
         // it couldn't hit 30fps, which read as "slow motion" downstream.
         const auto now = std::chrono::steady_clock::now();
         const bool heartbeat_due = (now - last_present_ts_) >= std::chrono::milliseconds(250);
-        const bool want_present  = (staging_dirty || heartbeat_due) && fse_visible_;
+        // slot_open also gates the heartbeat: submitting to a busy worker is
+        // exactly the stall-or-drop we are eliminating, and the heartbeat
+        // only exists to keep the driver's stereo alive during a quiet
+        // source - a present already in flight serves that purpose.
+        const bool want_present  = slot_open && (staging_dirty || heartbeat_due) && fse_visible_;
 
         if (want_present && renderer_.Staging()) {
             // Catch D3D11 device-removed before handing the frame to NV3DLib
@@ -1446,6 +1717,7 @@ void App::Tick() {
             } else {
                 const HRESULT phr = presenter_.SubmitFrame(renderer_.Staging());
                 fps_frames_++;
+                tick_presented  = true;
                 last_present_ts_ = now;
                 // Presenter-death watchdog (see App.h). A single failure can
                 // be a one-off (the async worker reports the PREVIOUS
@@ -1536,6 +1808,8 @@ void App::Tick() {
             }
         }
     }
+
+    AccumulatePacingStats(tick_captured, tick_presented);
 
     // FPS rolling average (1 Hz update)
     auto now = std::chrono::steady_clock::now();

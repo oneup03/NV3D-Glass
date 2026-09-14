@@ -23,6 +23,7 @@
     <ClCompile Include="src\HotkeyManager.cpp">    <Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="src\Logging.cpp">          <Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="src\NV3DPresenter.cpp">    <Filter>Source Files</Filter></ClCompile>
+    <ClCompile Include="src\NvProfile.cpp">       <Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="src\Renderer.cpp">         <Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="src\Settings.cpp">         <Filter>Source Files</Filter></ClCompile>
     <ClCompile Include="src\SourceEnumerator.cpp"> <Filter>Source Files</Filter></ClCompile>
@@ -38,6 +39,7 @@
     <ClInclude Include="src\HotkeyManager.h">      <Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="src\Logging.h">            <Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="src\NV3DPresenter.h">      <Filter>Header Files</Filter></ClInclude>
+    <ClInclude Include="src\NvProfile.h">          <Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="src\Renderer.h">           <Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="src\Settings.h">           <Filter>Header Files</Filter></ClInclude>
     <ClInclude Include="src\SourceEnumerator.h">   <Filter>Header Files</Filter></ClInclude>

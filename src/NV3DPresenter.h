@@ -22,7 +22,7 @@
 struct ID3D11Device;
 struct ID3D11Texture2D;
 
-namespace NV3D { class InterfaceDX11; }
+namespace NV3D { class InterfaceDX11; struct PresentStats; }
 
 namespace nv3dg {
 
@@ -76,6 +76,22 @@ public:
     bool RecreateWith(ID3D11Device* dev, const Settings& s, DWORD tracked_game_pid);
 
     bool IsActive() const { return iface_ != nullptr; }
+
+    // NV3DLib's "present worker is idle" event — SET between presents, RESET
+    // while one is in flight. Null when no session is up. App::Run waits on
+    // this to clock the capture/submit loop off the 3D panel instead of a
+    // wall-clock timer (see PacingMode::PresentClocked). Never close it; it
+    // belongs to the library and dies with Shutdown().
+    HANDLE PresentCompletedEvent() const;
+
+    // True while a present is in flight. Submitting then would either block
+    // the caller for up to NV3DLib's submit timeout or have the frame
+    // dropped, so the present-clocked loop skips the capture entirely.
+    bool IsPresentBusy() const;
+
+    // Drain NV3DLib's present-path counters (resets on read). Diagnostics
+    // only - see App's NV3D_GLASS_PACING log line.
+    void GetPresentStats(NV3D::PresentStats* out) const;
 
 private:
     NV3D::InterfaceDX11* iface_   = nullptr;

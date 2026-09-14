@@ -37,6 +37,16 @@ namespace {
 // ../VRScreenCap-main/src/loaders/katanga_loader.rs:42).
 constexpr const char* kMappingName = "Local\\KatangaMappedFile";
 
+// Additive extension to the Katanga contract: an auto-reset event the
+// producer signals once per published frame, right after it flushes. We
+// only ever OPEN it - creating it would hand a producer that checks for
+// pre-existence the wrong answer, and a producer that doesn't signal would
+// leave us waiting on an event nothing ever sets.
+//
+// UEVR-3D publishes it (src/mods/vr/flat3d/Flat3DKatanga.cpp). Geo-11 does
+// not, and must keep working identically - see FrameReadyEvent().
+constexpr const wchar_t* kFrameReadyName = L"Local\\KatangaFrameReady";
+
 }  // anonymous
 
 struct CaptureKatanga::Impl {
@@ -69,6 +79,14 @@ struct CaptureKatanga::Impl {
     uintptr_t                       import_fail_handle = 0;
     DWORD                           import_fail_tick   = 0;
     unsigned                        import_fail_suppressed = 0;
+    // Optional producer frame-ready extension (see kFrameReadyName). Null
+    // until the producer creates it; re-probed on a cadence because we
+    // routinely start before the game does. frame_signaled is set by the
+    // owner of the wait that consumed a signal and cleared when we hand a
+    // texture out.
+    HANDLE                          frame_ready = nullptr;
+    DWORD                           frame_ready_probe_tick = 0;
+    std::atomic<bool>               frame_signaled{false};
 };
 
 namespace {
@@ -282,6 +300,26 @@ bool CaptureKatanga::TryAcquire(ID3D11Texture2D** out, UINT* w, UINT* h, DXGI_FO
         }
     }
 
+    // Probe for the optional frame-ready event. Done here rather than in
+    // FrameReadyEvent() so the state is driven by the same per-tick call
+    // that everything else in this class is, and so a producer that starts
+    // after us is still picked up. Throttled: OpenEventW on a name that
+    // doesn't exist is cheap but not free, and for Geo-11 it never will.
+    if (!impl_->frame_ready) {
+        const DWORD tick = GetTickCount();
+        if (impl_->frame_ready_probe_tick == 0 ||
+            tick - impl_->frame_ready_probe_tick >= 500) {
+            impl_->frame_ready_probe_tick = tick;
+            impl_->frame_ready = OpenEventW(SYNCHRONIZE, FALSE, kFrameReadyName);
+            if (impl_->frame_ready) {
+                Log(NV3D::LogLevel::Info,
+                    L"CaptureKatanga: producer offers %s - switching to "
+                    L"frame-accurate acquisition",
+                    kFrameReadyName);
+            }
+        }
+    }
+
     uintptr_t now = ReadMappingHandle(impl_->mapping_view);
 
     if (now == 0) {
@@ -372,12 +410,31 @@ bool CaptureKatanga::TryAcquire(ID3D11Texture2D** out, UINT* w, UINT* h, DXGI_FO
     impl_->read_ready_at = {};
     ClearBadState(*impl_);   // we have a current good import
 
+    // Frame-ready gating. Only for producers that publish the extension:
+    // with one, hand out a texture exactly once per frame they actually
+    // drew. Without one (Geo-11 and the rest of the bare contract) there is
+    // nothing to gate on, and we fall through to the original behaviour of
+    // always succeeding - the caller re-presents the same texture, which is
+    // what the panel would show anyway.
+    if (impl_->frame_ready &&
+        !impl_->frame_signaled.exchange(false, std::memory_order_acq_rel)) {
+        return false;
+    }
+
     *out = impl_->shared_tex.Get();
     (*out)->AddRef();
     if (w)   *w   = impl_->width;
     if (h)   *h   = impl_->height;
     if (fmt) *fmt = impl_->format;
     return true;
+}
+
+HANDLE CaptureKatanga::FrameReadyEvent() const {
+    return impl_ ? impl_->frame_ready : nullptr;
+}
+
+void CaptureKatanga::MarkFrameSignaled() {
+    if (impl_) impl_->frame_signaled.store(true, std::memory_order_release);
 }
 
 bool CaptureKatanga::IsLost() const {
@@ -424,6 +481,11 @@ void CaptureKatanga::ResetForReconnect() {
 
 void CaptureKatanga::Stop() {
     if (!impl_) return;
+    if (impl_->frame_ready) {
+        CloseHandle(impl_->frame_ready);
+        impl_->frame_ready = nullptr;
+    }
+    impl_->frame_signaled.store(false, std::memory_order_release);
     impl_->shared_tex.Reset();
     if (impl_->mapping_view) {
         UnmapViewOfFile(impl_->mapping_view);
